@@ -90,4 +90,28 @@ mod tests {
         let res2 = executor.get_node_data(w.id).unwrap();
         assert_eq!(NdArray::to_vec(res2), vec![3.0]);
     }
+
+    #[test]
+    fn test_grad_simple() {
+        // y = 3 * x^2
+        // dy/dx = 6 * x
+        // x = 2.0 -> dy/dx = 12.0
+        let x_data = NdArray::from_vec(vec![2.0], &[1]);
+        let x = Tensor::<NdArray>::new_input(vec![1]);
+
+        let c3 = Tensor::<NdArray>::new_const(NdArray::from_vec(vec![3.0], &[1]));
+
+        let y = c3 * x.clone() * x.clone();
+        let grad_x = y.grad(&x);
+
+        // Need to run graph
+        let output = Tensor::<NdArray>::new_parameter(NdArray::zeros(&[1]));
+        let _assign = Tensor::assign(&output, &grad_x, 0);
+
+        let mut executor = build::<NdArray>();
+        executor.run(vec![(x, x_data)]);
+
+        let res = executor.get_node_data(output.id).unwrap();
+        assert_eq!(NdArray::to_vec(res), vec![12.0]);
+    }
 }

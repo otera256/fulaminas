@@ -14,6 +14,24 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Option<V
             }
             compute_matmul_shape(input_shapes[0], input_shapes[1])
         }
+        OpType::Transpose => {
+            if input_shapes.len() != 1 {
+                return None;
+            }
+            compute_transpose_shape(input_shapes[0])
+        }
+        OpType::Sum { axis } => {
+            if input_shapes.len() != 1 {
+                return None;
+            }
+            compute_sum_shape(input_shapes[0], *axis)
+        }
+        OpType::Identity => {
+            if input_shapes.len() != 1 {
+                return None;
+            }
+            Some(input_shapes[0].clone())
+        }
     }
 }
 
@@ -69,4 +87,28 @@ fn compute_matmul_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
     }
     // 他のケースは一旦未サポート
     None
+}
+
+fn compute_transpose_shape(a: &[usize]) -> Option<Vec<usize>> {
+    let ndim = a.len();
+    if ndim < 2 {
+        return Some(a.to_vec());
+    }
+    let mut shape = a.to_vec();
+    shape.swap(ndim - 1, ndim - 2);
+    Some(shape)
+}
+
+fn compute_sum_shape(a: &[usize], axis: Option<usize>) -> Option<Vec<usize>> {
+    match axis {
+        Some(ax) => {
+            if ax >= a.len() {
+                return None;
+            }
+            let mut shape = a.to_vec();
+            shape.remove(ax);
+            Some(shape)
+        }
+        None => Some(vec![]),
+    }
 }

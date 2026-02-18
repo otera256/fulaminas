@@ -192,4 +192,41 @@ impl<B: Backend + 'static> Tensor<B> {
     pub fn matmul(self, rhs: Self) -> Self {
         Tensor::op(OpType::Matmul, vec![&self, &rhs])
     }
+
+    pub fn transpose(self) -> Self {
+        Tensor::op(OpType::Transpose, vec![&self])
+    }
+
+    pub fn sum(self, axis: Option<usize>) -> Self {
+        Tensor::op(OpType::Sum { axis }, vec![&self])
+    }
+
+    // y.grad(x) で dy/dx を計算するノードを作成
+    pub fn grad(&self, x: &Tensor<B>) -> Tensor<B> {
+        let node_id = with_graph::<B, _, _>(|graph| {
+            // 形状チェック
+            let x_shape = graph.nodes[x.id]
+                .shape
+                .as_ref()
+                .expect("x node has no shape");
+            // y (self)はスカラーであると仮定する
+
+            let new_node_id = graph.nodes.len();
+            graph.nodes.push(Node {
+                id: new_node_id,
+                node_type: NodeType::Grad {
+                    x: x.id,
+                    y: self.id,
+                },
+                inputs: vec![], // Grad node explicitly depends on nothing in forward pass, but implicitly on graph
+                data: None,
+                shape: Some(x_shape.clone()),
+            });
+            new_node_id
+        });
+        Tensor::<B> {
+            id: node_id,
+            phantom: std::marker::PhantomData,
+        }
+    }
 }

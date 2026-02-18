@@ -16,6 +16,12 @@ pub enum NodeType {
         // モデルの学習自体もdepthが最大となるときの出力としてみなせる（する必要があるかは要検討）
         depth: usize,
     },
+    // 自動微分を行うためのノード
+    // yをxで微分した結果を表す
+    Grad {
+        x: NodeId,
+        y: NodeId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -24,6 +30,10 @@ pub enum OpType {
     Sub,
     Mul,
     Matmul,
+    Transpose,
+    Sum { axis: Option<usize> },
+    // 逆伝播時の勾配置換用
+    Identity,
 }
 
 #[derive(Clone, Debug)]
