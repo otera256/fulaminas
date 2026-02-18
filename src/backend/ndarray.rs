@@ -1,15 +1,13 @@
-
-
 use ndarray::{ArrayD, Dimension, IntoDimension, Ix2};
-use ndarray_rand::{RandomExt, rand_distr::Normal};
-use rand::{SeedableRng, distributions::Uniform, rngs::StdRng};
+use ndarray_rand::{rand_distr::Normal, RandomExt};
+use rand::{distributions::Uniform, rngs::StdRng, SeedableRng};
 
 use crate::backend::{Backend, Elm};
 
 #[derive(Debug, Clone)]
-pub struct NdarrayBackend;
+pub struct NdArray;
 
-impl Backend for NdarrayBackend {
+impl Backend for NdArray {
     type Tensor = ArrayD<f32>;
 
     fn zeros(shape: &[usize]) -> Self::Tensor {
@@ -70,7 +68,11 @@ impl Backend for NdarrayBackend {
             // Aの次元: [..., M, K]
             // Bの次元: [K, N]
             let k_dim = a.shape()[a_ndim - 1];
-            assert_eq!(k_dim, b.shape()[0], "Inner dimensions must match for matmul");
+            assert_eq!(
+                k_dim,
+                b.shape()[0],
+                "Inner dimensions must match for matmul"
+            );
             let m_dim = a.shape()[a_ndim - 2];
 
             // 出力の形状は [..., M, N]
@@ -81,7 +83,8 @@ impl Backend for NdarrayBackend {
             // uninitで高速化できるが、安全性のためにzerosで初期化する
             let mut output = ArrayD::<Elm>::zeros(output_shape);
             let a_chunks = a.exact_chunks((m_dim, k_dim).into_dimension().into_dyn());
-            let output_chunks = output.exact_chunks_mut((m_dim, b.shape()[1]).into_dimension().into_dyn());
+            let output_chunks =
+                output.exact_chunks_mut((m_dim, b.shape()[1]).into_dimension().into_dyn());
             ndarray::par_azip!((out_sub in output_chunks, a_sub in a_chunks) {
                 let a_sub_2d = a_sub.into_dimensionality::<Ix2>().unwrap();
 
@@ -96,7 +99,10 @@ impl Backend for NdarrayBackend {
 
             output
         } else {
-            panic!("Unsupported dimensions for matmul: A ndim={}, B ndim={}", a_ndim, b_ndim);
+            panic!(
+                "Unsupported dimensions for matmul: A ndim={}, B ndim={}",
+                a_ndim, b_ndim
+            );
         }
     }
 
@@ -117,7 +123,11 @@ impl Backend for NdarrayBackend {
 
     fn max(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor {
         match axis {
-            Some(ax) => a.map_axis(ndarray::Axis(ax), |sub| sub.iter().cloned().fold(f32::NEG_INFINITY, f32::max)).into_dyn(),
+            Some(ax) => a
+                .map_axis(ndarray::Axis(ax), |sub| {
+                    sub.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+                })
+                .into_dyn(),
             None => ArrayD::from_elem(vec![], a.iter().cloned().fold(f32::NEG_INFINITY, f32::max)),
         }
     }

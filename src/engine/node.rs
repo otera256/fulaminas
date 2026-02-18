@@ -11,7 +11,7 @@ pub enum NodeType {
     Assign {
         target: NodeId,
         depth: usize, // ループの深さを表す。0はループ外、1は最も内側のループ、2はその外側のループ、...となる
-    }
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -22,6 +22,7 @@ pub enum OpType {
     Matmul,
 }
 
+#[derive(Clone, Debug)]
 pub struct Node<B: Backend> {
     pub id: NodeId,
     pub node_type: NodeType,
