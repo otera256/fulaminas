@@ -15,6 +15,7 @@ pub mod executor;
 pub mod layer;
 pub mod model;
 pub mod node;
+pub mod shape;
 pub mod tensor;
 
 #[derive(Debug, Clone)]
@@ -46,13 +47,21 @@ where
     })
 }
 
-pub fn build<B: Backend + 'static>(outputs: Vec<NodeId>) -> Executor<B> {
+pub fn build<B: Backend + 'static>() -> Executor<B> {
     // コンパイルは１回しか呼ばれないはずなので、cloneのコストは許容できる
-    with_graph::<B, _, _>(|graph| graph.clone().build(outputs))
+    with_graph::<B, _, _>(|graph| graph.clone().build())
 }
 
 impl<B: Backend> GraphBuilder<B> {
-    fn build(self, outputs: Vec<NodeId>) -> Executor<B> {
+    fn build(self) -> Executor<B> {
+        // Assignノードを全て取得し、それらをグラフの出力（ルート）として扱う
+        let mut outputs = Vec::new();
+        for node in &self.nodes {
+            if let NodeType::Assign { .. } = node.node_type {
+                outputs.push(node.id);
+            }
+        }
+
         // 幅優先探索により、出力ノードから逆順にノードを訪問する
         let mut queue = VecDeque::new();
         let mut visited = HashSet::new();
@@ -63,10 +72,6 @@ impl<B: Backend> GraphBuilder<B> {
             visited.insert(output);
         }
         while let Some(node_id) = queue.pop_front() {
-            // Assignノードは一旦計算グラフには含めない
-            if let NodeType::Assign { .. } = self.nodes[node_id].node_type {
-                continue;
-            }
             in_degree.entry(node_id).or_insert(0);
             for &input in &self.nodes[node_id].inputs {
                 if !visited.contains(&input) {
@@ -92,6 +97,6 @@ impl<B: Backend> GraphBuilder<B> {
                 }
             }
         }
-        Executor::new(self.nodes, order, outputs)
+        Executor::new(self.nodes, order)
     }
 }

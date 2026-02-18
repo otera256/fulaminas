@@ -10,7 +10,11 @@ pub enum NodeType {
     Operation(OpType),
     Assign {
         target: NodeId,
-        depth: usize, // ループの深さを表す。0はループ外、1は最も内側のループ、2はその外側のループ、...となる
+        // 外部への出力または、モデル内部のループの深さを表す。
+        // depthが小さいほど内側のループ
+        // どこかしらで出力の深さを指定する
+        // モデルの学習自体もdepthが最大となるときの出力としてみなせる（する必要があるかは要検討）
+        depth: usize,
     },
 }
 
@@ -30,4 +34,5 @@ pub struct Node<B: Backend> {
     // 実行時に値が入る場所
     // 構築時はNoneで、実行時にSome(tensor)になる
     pub data: Option<B::Tensor>,
+    pub shape: Option<Vec<usize>>,
 }

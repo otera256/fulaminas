@@ -15,7 +15,7 @@ pub struct Tensor<B: Backend + 'static> {
 
 impl<B: Backend + 'static> Tensor<B> {
     // 入力プレースホルダーを作成するための関数
-    pub fn new_input() -> Tensor<B> {
+    pub fn new_input(shape: Vec<usize>) -> Tensor<B> {
         let node_id = with_graph::<B, _, _>(|graph| {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
@@ -23,6 +23,7 @@ impl<B: Backend + 'static> Tensor<B> {
                 node_type: NodeType::Input,
                 inputs: Vec::new(),
                 data: None, // 入力ノードは構築時には値がない
+                shape: Some(shape),
             });
             new_node_id
         });
@@ -34,13 +35,15 @@ impl<B: Backend + 'static> Tensor<B> {
 
     // 学習可能なパラメータを作成するための関数
     pub fn new_parameter(data: B::Tensor) -> Tensor<B> {
+        let shape = B::shape(&data);
         let node_id = with_graph::<B, _, _>(|graph| {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
                 node_type: NodeType::Parameter,
                 inputs: Vec::new(),
-                data: Some(data), // パラメータノードは構築時に値がある
+                data: Some(data),
+                shape: Some(shape),
             });
             new_node_id
         });
@@ -52,13 +55,15 @@ impl<B: Backend + 'static> Tensor<B> {
 
     // 定数ノードを作成するための関数
     pub fn new_const(data: B::Tensor) -> Tensor<B> {
+        let shape = B::shape(&data);
         let node_id = with_graph::<B, _, _>(|graph| {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
                 node_type: NodeType::Const,
                 inputs: Vec::new(),
-                data: Some(data), // 定数ノードは構築時に値がある
+                data: Some(data),
+                shape: Some(shape),
             });
             new_node_id
         });
@@ -72,12 +77,31 @@ impl<B: Backend + 'static> Tensor<B> {
     pub fn op(op_type: OpType, inputs: Vec<&Tensor<B>>) -> Tensor<B> {
         // グラフビルダーに新しいノードを追加して、そのIDを取得する
         let node_id = with_graph::<B, _, _>(|graph| {
+            // 入力の形状を取得
+            let input_shapes: Vec<Vec<usize>> = inputs
+                .iter()
+                .map(|t| {
+                    graph.nodes[t.id]
+                        .shape
+                        .clone()
+                        .expect("Input node has no shape")
+                })
+                .collect();
+
+            // 参照のベクタを作成
+            let input_shape_refs: Vec<&Vec<usize>> = input_shapes.iter().collect();
+
+            // 形状推論 (engine::shape::compute_shape を使用)
+            let output_shape = crate::engine::shape::compute_shape(&op_type, &input_shape_refs)
+                .expect("Shape mismatch in operation");
+
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
                 node_type: NodeType::Operation(op_type),
                 inputs: inputs.iter().map(|&tensor| tensor.id).collect(),
-                data: None, // 演算ノードは構築時には値がない
+                data: None,
+                shape: Some(output_shape),
             });
             new_node_id
         });
@@ -91,6 +115,23 @@ impl<B: Backend + 'static> Tensor<B> {
     // RNNやオプティマイザーの更新ルールなど、ループ内で変数を更新する必要がある場合に使用する
     pub fn assign(target: &Tensor<B>, value: &Tensor<B>, depth: usize) -> Tensor<B> {
         let node_id = with_graph::<B, _, _>(|graph| {
+            // 形状チェック
+            let target_shape = graph.nodes[target.id]
+                .shape
+                .as_ref()
+                .expect("Target node has no shape");
+            let value_shape = graph.nodes[value.id]
+                .shape
+                .as_ref()
+                .expect("Value node has no shape");
+
+            if target_shape != value_shape {
+                panic!(
+                    "Shape mismatch in assign: target={:?}, value={:?}",
+                    target_shape, value_shape
+                );
+            }
+
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
@@ -99,7 +140,8 @@ impl<B: Backend + 'static> Tensor<B> {
                     depth,
                 },
                 inputs: vec![value.id],
-                data: None, // 代入ノードは構築時には値がない
+                data: None,                        // 代入ノードは構築時には値がない
+                shape: Some(target_shape.clone()), // Assignノード自体のShapeはTargetと同じとする
             });
             new_node_id
         });
