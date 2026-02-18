@@ -32,6 +32,24 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Option<V
             }
             Some(input_shapes[0].clone())
         }
+        OpType::AddN => {
+            if input_shapes.is_empty() {
+                return None;
+            }
+            let first_shape = input_shapes[0];
+            for shape in input_shapes.iter().skip(1) {
+                if shape != &first_shape {
+                    return None;
+                }
+            }
+            Some(first_shape.clone())
+        }
+        OpType::Neg | OpType::OnesLike => {
+            if input_shapes.len() != 1 {
+                return None;
+            }
+            Some(input_shapes[0].clone())
+        }
     }
 }
 

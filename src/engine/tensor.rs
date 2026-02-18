@@ -7,6 +7,11 @@ use crate::{
 };
 
 // Backend::Tensorとは異なり、グラフ構造を普通の演算のように構築できるようにするためのTensor構造体
+/// 計算グラフ上のノードへの参照（ハンドル）を表す構造体。
+///
+/// `Tensor`はバックエンドの実データ(`B::Tensor`)を直接保持するのではなく、
+/// 計算グラフ(`GraphBuilder`)内のノードID(`NodeId`)を保持します。
+/// これにより、ユーザーは`Tensor`同士の演算を行うだけで、自動的に計算グラフが構築されます。
 #[derive(Debug, Clone, Copy)]
 pub struct Tensor<B: Backend + 'static> {
     pub(crate) id: NodeId,
@@ -14,7 +19,16 @@ pub struct Tensor<B: Backend + 'static> {
 }
 
 impl<B: Backend + 'static> Tensor<B> {
-    // 入力プレースホルダーを作成するための関数
+    pub(crate) fn from_id(id: NodeId) -> Self {
+        Tensor {
+            id,
+            phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// 入力プレースホルダーを作成します。
+    ///
+    /// 実行時(`Executor::run`)に外部からデータを与えるためのノードです。
     pub fn new_input(shape: Vec<usize>) -> Tensor<B> {
         let node_id = with_graph::<B, _, _>(|graph| {
             let new_node_id = graph.nodes.len();
@@ -33,7 +47,9 @@ impl<B: Backend + 'static> Tensor<B> {
         }
     }
 
-    // 学習可能なパラメータを作成するための関数
+    /// 学習可能なパラメータを作成します。
+    ///
+    /// 内部にデータを保持し、学習によって更新される可能性のあるノードです。
     pub fn new_parameter(data: B::Tensor) -> Tensor<B> {
         let shape = B::shape(&data);
         let node_id = with_graph::<B, _, _>(|graph| {
@@ -53,7 +69,9 @@ impl<B: Backend + 'static> Tensor<B> {
         }
     }
 
-    // 定数ノードを作成するための関数
+    /// 定数ノードを作成します。
+    ///
+    /// パラメータとは異なり、学習によって更新されない固定値を持つノードです。
     pub fn new_const(data: B::Tensor) -> Tensor<B> {
         let shape = B::shape(&data);
         let node_id = with_graph::<B, _, _>(|graph| {
@@ -73,7 +91,7 @@ impl<B: Backend + 'static> Tensor<B> {
         }
     }
 
-    // 新しい演算ノードをグラフに追加するためのヘルパー関数
+    /// 新しい演算ノードをグラフに追加するための内部ヘルパー関数
     pub fn op(op_type: OpType, inputs: Vec<&Tensor<B>>) -> Tensor<B> {
         // グラフビルダーに新しいノードを追加して、そのIDを取得する
         let node_id = with_graph::<B, _, _>(|graph| {
@@ -111,8 +129,11 @@ impl<B: Backend + 'static> Tensor<B> {
         }
     }
 
-    // 代入ノードをグラフに追加するためのヘルパー関数
-    // RNNやオプティマイザーの更新ルールなど、ループ内で変数を更新する必要がある場合に使用する
+    /// 代入ノードをグラフに追加します。
+    ///
+    /// `target`テンソルに`value`テンソルの値を代入する操作を表します。
+    /// RNNやオプティマイザーの更新ルールなど、ループ内で変数を更新する必要がある場合に使用します。
+    /// `depth`はループのネストレベルなど、実行順序制御に使用される可能性があります。
     pub fn assign(target: &Tensor<B>, value: &Tensor<B>, depth: usize) -> Tensor<B> {
         let node_id = with_graph::<B, _, _>(|graph| {
             // 形状チェック
@@ -188,20 +209,27 @@ impl<B: Backend + 'static> Tensor<B> {
     pub fn mul(self, rhs: Self) -> Self {
         Tensor::op(OpType::Mul, vec![&self, &rhs])
     }
-    // 行列積のための専用関数
+    /// 行列積 (Matrix Multiplication) を行います。
     pub fn matmul(self, rhs: Self) -> Self {
         Tensor::op(OpType::Matmul, vec![&self, &rhs])
     }
 
+    /// 転置 (Transpose) を行います。
+    /// 最後の2次元を入れ替えます。
     pub fn transpose(self) -> Self {
         Tensor::op(OpType::Transpose, vec![&self])
     }
 
+    /// 指定された軸で和をとります (Sum)。
+    /// `None`の場合は全要素の和をとります。
     pub fn sum(self, axis: Option<usize>) -> Self {
         Tensor::op(OpType::Sum { axis }, vec![&self])
     }
 
-    // y.grad(x) で dy/dx を計算するノードを作成
+    /// 勾配計算ノード(`Grad`)を作成します。
+    ///
+    /// `self` (y) を `x` で微分した勾配 (dy/dx) を計算するリクエストをグラフに追加します。
+    /// 実際の勾配計算はグラフ構築後(`GraphBuilder::build`)の自動微分フェーズで行われます。
     pub fn grad(&self, x: &Tensor<B>) -> Tensor<B> {
         let node_id = with_graph::<B, _, _>(|graph| {
             // 形状チェック
@@ -228,5 +256,21 @@ impl<B: Backend + 'static> Tensor<B> {
             id: node_id,
             phantom: std::marker::PhantomData,
         }
+    }
+
+    /// 複数のTensorの和を効率的に計算するノードを作成します。
+    pub fn add_n(tensors: Vec<Self>) -> Self {
+        let refs: Vec<&Tensor<B>> = tensors.iter().collect();
+        Tensor::op(OpType::AddN, refs)
+    }
+
+    /// 符号反転 (-x) を行います。
+    pub fn neg(self) -> Self {
+        Tensor::op(OpType::Neg, vec![&self])
+    }
+
+    /// 同じ形状で全ての要素が1のTensorを作成します。
+    pub fn ones_like(tensor: &Self) -> Self {
+        Tensor::op(OpType::OnesLike, vec![tensor])
     }
 }

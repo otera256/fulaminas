@@ -16,6 +16,9 @@ impl Backend for NdArray {
     fn ones(shape: &[usize]) -> Self::Tensor {
         ArrayD::ones(shape)
     }
+    fn ones_like(tensor: &Self::Tensor) -> Self::Tensor {
+        ArrayD::ones(tensor.shape())
+    }
     fn random_normal(shape: &[usize], mean: Elm, std: Elm, seed: Option<u64>) -> Self::Tensor {
         let mut rng = match seed {
             Some(s) => StdRng::seed_from_u64(s),
@@ -130,5 +133,9 @@ impl Backend for NdArray {
                 .into_dyn(),
             None => ArrayD::from_elem(vec![], a.iter().cloned().fold(f32::NEG_INFINITY, f32::max)),
         }
+    }
+
+    fn neg(a: &Self::Tensor) -> Self::Tensor {
+        -a
     }
 }

@@ -9,6 +9,7 @@ pub trait Backend: Clone + Debug {
 
     fn zeros(shape: &[usize]) -> Self::Tensor;
     fn ones(shape: &[usize]) -> Self::Tensor;
+    fn ones_like(tensor: &Self::Tensor) -> Self::Tensor;
     fn random_normal(shape: &[usize], mean: Elm, std: Elm, seed: Option<u64>) -> Self::Tensor;
     fn random_uniform(shape: &[usize], low: Elm, high: Elm, seed: Option<u64>) -> Self::Tensor;
 
@@ -31,4 +32,6 @@ pub trait Backend: Clone + Debug {
 
     fn sum(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor;
     fn max(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor;
+
+    fn neg(a: &Self::Tensor) -> Self::Tensor;
 }
