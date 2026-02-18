@@ -38,7 +38,7 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Option<V
             }
             let first_shape = input_shapes[0];
             for shape in input_shapes.iter().skip(1) {
-                if shape != &first_shape {
+                if *shape != first_shape {
                     return None;
                 }
             }
@@ -49,6 +49,24 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Option<V
                 return None;
             }
             Some(input_shapes[0].clone())
+        }
+        OpType::Sigmoid
+        | OpType::Tanh
+        | OpType::ReLU
+        | OpType::Softmax { .. }
+        | OpType::Exp
+        | OpType::Log
+        | OpType::Powi { .. } => {
+            if input_shapes.len() != 1 {
+                return None;
+            }
+            Some(input_shapes[0].clone())
+        }
+        OpType::Gt => {
+            if input_shapes.len() != 2 {
+                return None;
+            }
+            broadcast_shape(input_shapes[0], input_shapes[1])
         }
     }
 }

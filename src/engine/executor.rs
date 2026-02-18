@@ -62,6 +62,14 @@ impl<B: Backend> Executor<B> {
                         }
                         OpType::Neg => B::neg(input_tensors[0]),
                         OpType::OnesLike => B::ones_like(input_tensors[0]),
+                        OpType::Sigmoid => B::sigmoid(input_tensors[0]),
+                        OpType::Tanh => B::tanh(input_tensors[0]),
+                        OpType::ReLU => B::relu(input_tensors[0]),
+                        OpType::Softmax { axis } => B::softmax(input_tensors[0], axis),
+                        OpType::Exp => B::exp(input_tensors[0]),
+                        OpType::Log => B::log(input_tensors[0]),
+                        OpType::Powi { n } => B::powi(input_tensors[0], n),
+                        OpType::Gt => B::gt(input_tensors[0], input_tensors[1]),
                     };
                     output_data = Some(output);
                 }

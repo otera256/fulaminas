@@ -37,6 +37,18 @@ pub enum OpType {
     AddN,
     Neg,
     OnesLike,
+    Sigmoid,
+    Tanh,
+    ReLU,
+    Softmax {
+        axis: Option<usize>,
+    },
+    Exp,
+    Log,
+    Powi {
+        n: i32,
+    },
+    Gt,
     /// 逆伝播時の勾配置換用（入力をそのまま出力する）
     Identity,
 }

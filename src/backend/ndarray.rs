@@ -113,10 +113,6 @@ impl Backend for NdArray {
         tensor.t().to_owned()
     }
 
-    fn relu(tensor: &Self::Tensor) -> Self::Tensor {
-        tensor.mapv(|x| x.max(0.0))
-    }
-
     fn sum(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor {
         match axis {
             Some(ax) => a.sum_axis(ndarray::Axis(ax)).into_dyn(),
@@ -137,5 +133,57 @@ impl Backend for NdArray {
 
     fn neg(a: &Self::Tensor) -> Self::Tensor {
         -a
+    }
+
+    fn sigmoid(a: &Self::Tensor) -> Self::Tensor {
+        a.mapv(|v| 1.0 / (1.0 + (-v).exp()))
+    }
+
+    fn tanh(a: &Self::Tensor) -> Self::Tensor {
+        a.mapv(|v| v.tanh())
+    }
+
+    fn relu(a: &Self::Tensor) -> Self::Tensor {
+        a.mapv(|v| v.max(0.0))
+    }
+
+    fn softmax(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor {
+        let axis = axis.unwrap_or_else(|| a.ndim() - 1);
+        let max = a.fold_axis(ndarray::Axis(axis), f32::NEG_INFINITY, |&acc, &x| {
+            acc.max(x)
+        });
+        // max shape reduced dimension, need to reshape to broadcast?
+        // ndarray broadcasting is implicit but dimensions must match.
+        // We need to keep dims for max to subtract.
+        // Actually computing softmax correctly with stability:
+        // exp(x - max) / sum(exp(x - max))
+
+        // Let's do stable:
+        // We need 'max' to have same dimensionality for substraction.
+        // Use map_axis to handle 1D subarrays which is easier.
+        let mut out = a.clone();
+        out.map_axis_mut(ndarray::Axis(axis), |mut view| {
+            let max = view.fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));
+            view.mapv_inplace(|v| (v - max).exp());
+            let sum = view.sum();
+            view.mapv_inplace(|v| v / sum);
+        });
+        out
+    }
+
+    fn log(a: &Self::Tensor) -> Self::Tensor {
+        a.mapv(|v| v.ln())
+    }
+
+    fn exp(a: &Self::Tensor) -> Self::Tensor {
+        a.mapv(|v| v.exp())
+    }
+
+    fn powi(a: &Self::Tensor, n: i32) -> Self::Tensor {
+        a.mapv(|v| v.powi(n))
+    }
+
+    fn gt(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
+        (a - b).mapv(|v| if v > 0.0 { 1.0 } else { 0.0 })
     }
 }

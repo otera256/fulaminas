@@ -19,6 +19,10 @@ pub struct Tensor<B: Backend + 'static> {
 }
 
 impl<B: Backend + 'static> Tensor<B> {
+    pub fn id(&self) -> NodeId {
+        self.id
+    }
+
     pub(crate) fn from_id(id: NodeId) -> Self {
         Tensor {
             id,
@@ -272,5 +276,48 @@ impl<B: Backend + 'static> Tensor<B> {
     /// 同じ形状で全ての要素が1のTensorを作成します。
     pub fn ones_like(tensor: &Self) -> Self {
         Tensor::op(OpType::OnesLike, vec![tensor])
+    }
+
+    pub fn sigmoid(self) -> Self {
+        Tensor::op(OpType::Sigmoid, vec![&self])
+    }
+
+    pub fn tanh(self) -> Self {
+        Tensor::op(OpType::Tanh, vec![&self])
+    }
+
+    pub fn relu(self) -> Self {
+        Tensor::op(OpType::ReLU, vec![&self])
+    }
+
+    pub fn softmax(self, axis: Option<usize>) -> Self {
+        Tensor::op(OpType::Softmax { axis }, vec![&self])
+    }
+
+    pub fn exp(self) -> Self {
+        Tensor::op(OpType::Exp, vec![&self])
+    }
+
+    pub fn log(self) -> Self {
+        Tensor::op(OpType::Log, vec![&self])
+    }
+
+    pub fn powi(self, n: i32) -> Self {
+        Tensor::op(OpType::Powi { n }, vec![&self])
+    }
+
+    /// Swish activation: x * sigmoid(x)
+    pub fn swish(self) -> Self {
+        self.clone() * self.sigmoid()
+    }
+
+    /// Softplus activation: log(1 + exp(x))
+    pub fn softplus(self) -> Self {
+        let one = Tensor::ones_like(&self);
+        (one + self.exp()).log()
+    }
+
+    pub fn gt(self, rhs: Self) -> Self {
+        Tensor::op(OpType::Gt, vec![&self, &rhs])
     }
 }

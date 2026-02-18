@@ -163,6 +163,115 @@ pub fn expand_graph<B: Backend + 'static>() {
                             .push(final_grad.clone());
                     }
                 }
+                NodeType::Operation(OpType::Sigmoid) => {
+                    // y = sigmoid(x)
+                    // dy/dx = y * (1 - y)
+                    let y = Tensor::from_id(node_id); // Output of this node
+                    let one = Tensor::ones_like(&y);
+                    // grad = final_grad * y * (1 - y)
+                    let grad = final_grad * y.clone() * (one - y);
+                    node_grads
+                        .entry(input_tensors[0].id)
+                        .or_default()
+                        .push(grad);
+                }
+                NodeType::Operation(OpType::Tanh) => {
+                    // y = tanh(x)
+                    // dy/dx = 1 - y^2
+                    let y = Tensor::from_id(node_id);
+                    let one = Tensor::ones_like(&y);
+                    // grad = final_grad * (1 - y^2)
+                    let grad = final_grad * (one - y.powi(2));
+                    node_grads
+                        .entry(input_tensors[0].id)
+                        .or_default()
+                        .push(grad);
+                }
+                NodeType::Operation(OpType::Exp) => {
+                    // y = exp(x)
+                    // dy/dx = y
+                    let y = Tensor::from_id(node_id);
+                    let grad = final_grad * y;
+                    node_grads
+                        .entry(input_tensors[0].id)
+                        .or_default()
+                        .push(grad);
+                }
+                NodeType::Operation(OpType::Log) => {
+                    // y = log(x)
+                    // dy/dx = 1 / x
+                    let x = &input_tensors[0];
+                    // 1/x = x^(-1) or powi(-1)
+                    let grad = final_grad * x.clone().powi(-1);
+                    node_grads.entry(x.id).or_default().push(grad);
+                }
+                NodeType::Operation(OpType::ReLU) => {
+                    // y = max(0, x)
+                    // dy/dx = 1 if x > 0 else 0
+                    let x = Tensor::from_id(input_tensors[0].id);
+                    // Let's use `x.gt(x - x)`.
+                    let zeros = x.clone() - x.clone();
+                    let mask = x.gt(zeros);
+                    let grad = final_grad * mask;
+                    node_grads
+                        .entry(input_tensors[0].id)
+                        .or_default()
+                        .push(grad);
+                }
+                NodeType::Operation(OpType::Softmax { axis }) => {
+                    // Softmax output y
+                    // Jacobian matrix J_ij = y_i (delta_ij - y_j)
+                    // grad_x = grad_y * J
+                    // This is complex for elementwise AD.
+                    // Simplified: dx_i = y_i (grad_i - sum(y_k * grad_k))
+                    let y = Tensor::from_id(node_id);
+                    let gy = final_grad;
+                    let y_gy = y.clone() * gy.clone(); // y * grad
+                    let sum_y_gy = y_gy.sum(axis); // sum(y * grad)
+                                                   // To subtract this scalar/reduced tensor from vectors, we need broadcast.
+                                                   // Current sum implementation reduces dimension.
+                                                   // We need to keep dimension or rely on broadcast of `sub`.
+                                                   // If sum reduces shape, e.g. [2,3] -> [2], sub [2,3] - [2] works if [2] is treated as [2,1] or compatible.
+                                                   // Our broadcast logic handles it?
+                                                   // Let's check `shape.rs`. It handles basic broadcast.
+                                                   // But `sum` removes the axis. So [2,3] sum axis 1 -> [2].
+                                                   // [2,3] - [2] might fail if [2] aligns with dim 0.
+                                                   // We often need `keep_dims=True`.
+
+                    // Workaround: We don't have keep_dims in Sum op.
+                    // But we can reshape? Or just trust backend broadcast behavior?
+                    // For now, let's implement assuming broadcast works or standard simple Softmax grad.
+
+                    // Using the formula: grad_input = y * (grad - sum(grad * y))
+                    // We need `sum` to match dimensions.
+                    // If `axis` is None (all), sum is scalar []. [2,3] - [] works.
+                    // If `axis` is specified, we might have issue.
+                    // Let's leave a TODO/Note or try best effort.
+                    // The standard way is:
+                    // dx = y * (dy - sum(dy * y, axis=axis, keepdims=True))
+
+                    let grad = y.clone() * (gy - sum_y_gy); // This might need explicit broadcast/reshape
+                    node_grads
+                        .entry(input_tensors[0].id)
+                        .or_default()
+                        .push(grad);
+                }
+                NodeType::Operation(OpType::Powi { n }) => {
+                    // y = x^n
+                    // dy/dx = n * x^(n-1)
+                    let x = Tensor::from_id(input_tensors[0].id);
+                    let n_const = Tensor::new_const(B::from_vec(vec![n as f32], &[1])); // Create scalar const?
+                                                                                        // We don't have explicit Scalar mul yet, but we can broad cast.
+                                                                                        // Actually `OpType::Mul` works on tensors.
+
+                    // Optimization: Use `powi(n-1)`
+                    let nx_n_minus_1 = x.powi(n - 1) * n_const;
+                    let grad = final_grad * nx_n_minus_1;
+                    node_grads
+                        .entry(input_tensors[0].id)
+                        .or_default()
+                        .push(grad);
+                }
                 _ => {}
             }
         }

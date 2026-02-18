@@ -28,10 +28,16 @@ pub trait Backend: Clone + Debug {
 
     fn transpose(tensor: &Self::Tensor) -> Self::Tensor;
 
-    fn relu(tensor: &Self::Tensor) -> Self::Tensor;
-
     fn sum(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor;
     fn max(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor;
 
     fn neg(a: &Self::Tensor) -> Self::Tensor;
+    fn sigmoid(a: &Self::Tensor) -> Self::Tensor;
+    fn tanh(a: &Self::Tensor) -> Self::Tensor;
+    fn relu(a: &Self::Tensor) -> Self::Tensor;
+    fn softmax(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor;
+    fn log(a: &Self::Tensor) -> Self::Tensor;
+    fn exp(a: &Self::Tensor) -> Self::Tensor;
+    fn powi(a: &Self::Tensor, n: i32) -> Self::Tensor;
+    fn gt(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor; // For ReLU grad
 }
