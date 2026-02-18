@@ -1,0 +1,124 @@
+
+
+use ndarray::{ArrayD, Dimension, IntoDimension, Ix2};
+use ndarray_rand::{RandomExt, rand_distr::Normal};
+use rand::{SeedableRng, distributions::Uniform, rngs::StdRng};
+
+use crate::backend::{Backend, Elm};
+
+#[derive(Debug, Clone)]
+pub struct NdarrayBackend;
+
+impl Backend for NdarrayBackend {
+    type Tensor = ArrayD<f32>;
+
+    fn zeros(shape: &[usize]) -> Self::Tensor {
+        ArrayD::zeros(shape)
+    }
+    fn ones(shape: &[usize]) -> Self::Tensor {
+        ArrayD::ones(shape)
+    }
+    fn random_normal(shape: &[usize], mean: Elm, std: Elm, seed: Option<u64>) -> Self::Tensor {
+        let mut rng = match seed {
+            Some(s) => StdRng::seed_from_u64(s),
+            None => StdRng::from_entropy(),
+        };
+        ArrayD::random_using(shape, Normal::new(mean, std).unwrap(), &mut rng)
+    }
+    fn random_uniform(shape: &[usize], low: Elm, high: Elm, seed: Option<u64>) -> Self::Tensor {
+        let mut rng = match seed {
+            Some(s) => StdRng::seed_from_u64(s),
+            None => StdRng::from_entropy(),
+        };
+        ArrayD::random_using(shape, Uniform::new(low, high), &mut rng)
+    }
+
+    fn from_vec(vec: Vec<Elm>, shape: &[usize]) -> Self::Tensor {
+        ArrayD::from_shape_vec(shape, vec).unwrap()
+    }
+    fn to_vec(tensor: &Self::Tensor) -> Vec<Elm> {
+        tensor.iter().cloned().collect()
+    }
+
+    fn shape(tensor: &Self::Tensor) -> Vec<usize> {
+        tensor.shape().to_vec()
+    }
+
+    fn add(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
+        a + b
+    }
+    fn sub(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
+        a - b
+    }
+    fn mul(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
+        a * b
+    }
+    // 実装の簡単のために重みbは2次元行列であると仮定する
+    // 例えば, A=[Batch, Time, In], B=[In, Out] -> Output=[Batch, Time, Out]
+    fn matmul(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
+        let a_ndim = a.ndim();
+        let b_ndim = b.ndim();
+
+        // 両方2次元のとき
+        if a_ndim == 2 && b_ndim == 2 {
+            let a_view = a.view().into_dimensionality::<Ix2>().unwrap();
+            let b_view = b.view().into_dimensionality::<Ix2>().unwrap();
+            return a_view.dot(&b_view).into_dyn();
+        } else if a_ndim > 2 && b_ndim == 2 {
+            let b_view = b.view().into_dimensionality::<Ix2>().unwrap();
+
+            // Aの次元: [..., M, K]
+            // Bの次元: [K, N]
+            let k_dim = a.shape()[a_ndim - 1];
+            assert_eq!(k_dim, b.shape()[0], "Inner dimensions must match for matmul");
+            let m_dim = a.shape()[a_ndim - 2];
+
+            // 出力の形状は [..., M, N]
+            let mut output_shape = a.shape().to_vec();
+            output_shape[a_ndim - 1] = b.shape()[1];
+
+            // 最後の2次元を行列積して、残りの次元はブロードキャストする
+            // uninitで高速化できるが、安全性のためにzerosで初期化する
+            let mut output = ArrayD::<Elm>::zeros(output_shape);
+            let a_chunks = a.exact_chunks((m_dim, k_dim).into_dimension().into_dyn());
+            let output_chunks = output.exact_chunks_mut((m_dim, b.shape()[1]).into_dimension().into_dyn());
+            ndarray::par_azip!((out_sub in output_chunks, a_sub in a_chunks) {
+                let a_sub_2d = a_sub.into_dimensionality::<Ix2>().unwrap();
+
+                ndarray::linalg::general_mat_mul(
+                    1.0,
+                    &a_sub_2d,
+                    &b_view,
+                    0.0,
+                    &mut out_sub.into_dimensionality::<Ix2>().unwrap()
+                );
+            });
+
+            output
+        } else {
+            panic!("Unsupported dimensions for matmul: A ndim={}, B ndim={}", a_ndim, b_ndim);
+        }
+    }
+
+    fn transpose(tensor: &Self::Tensor) -> Self::Tensor {
+        tensor.t().to_owned()
+    }
+
+    fn relu(tensor: &Self::Tensor) -> Self::Tensor {
+        tensor.mapv(|x| x.max(0.0))
+    }
+
+    fn sum(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor {
+        match axis {
+            Some(ax) => a.sum_axis(ndarray::Axis(ax)).into_dyn(),
+            None => ArrayD::from_elem(vec![], a.sum()),
+        }
+    }
+
+    fn max(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor {
+        match axis {
+            Some(ax) => a.map_axis(ndarray::Axis(ax), |sub| sub.iter().cloned().fold(f32::NEG_INFINITY, f32::max)).into_dyn(),
+            None => ArrayD::from_elem(vec![], a.iter().cloned().fold(f32::NEG_INFINITY, f32::max)),
+        }
+    }
+}
