@@ -49,6 +49,7 @@ impl<B: Backend> Executor<B> {
                         OpType::Add => B::add(input_tensors[0], input_tensors[1]),
                         OpType::Sub => B::sub(input_tensors[0], input_tensors[1]),
                         OpType::Mul => B::mul(input_tensors[0], input_tensors[1]),
+                        OpType::Div => B::div(input_tensors[0], input_tensors[1]),
                         OpType::Matmul => B::matmul(input_tensors[0], input_tensors[1]),
                         OpType::Transpose => B::transpose(input_tensors[0]),
                         OpType::Sum { axis } => B::sum(input_tensors[0], axis),
@@ -70,6 +71,7 @@ impl<B: Backend> Executor<B> {
                         OpType::Log => B::log(input_tensors[0]),
                         OpType::Powi { n } => B::powi(input_tensors[0], n),
                         OpType::Gt => B::gt(input_tensors[0], input_tensors[1]),
+                        OpType::Sqrt => B::sqrt(input_tensors[0]),
                     };
                     output_data = Some(output);
                 }

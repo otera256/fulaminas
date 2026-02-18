@@ -54,6 +54,9 @@ impl Backend for NdArray {
     fn mul(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
         a * b
     }
+    fn div(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
+        a / b
+    }
     // 実装の簡単のために重みbは2次元行列であると仮定する
     // 例えば, A=[Batch, Time, In], B=[In, Out] -> Output=[Batch, Time, Out]
     fn matmul(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
@@ -185,5 +188,9 @@ impl Backend for NdArray {
 
     fn gt(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
         (a - b).mapv(|v| if v > 0.0 { 1.0 } else { 0.0 })
+    }
+
+    fn sqrt(a: &Self::Tensor) -> Self::Tensor {
+        a.mapv(|v| v.sqrt())
     }
 }

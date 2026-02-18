@@ -202,6 +202,14 @@ impl<B: Backend + 'static> std::ops::Mul for Tensor<B> {
     }
 }
 
+impl<B: Backend + 'static> std::ops::Div for Tensor<B> {
+    type Output = Tensor<B>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Tensor::op(OpType::Div, vec![&self, &rhs])
+    }
+}
+
 impl<B: Backend + 'static> Tensor<B> {
     // メソッドとしても和差積を定義しておくと、演算子オーバーロードと両方使えるので便利
     pub fn add(self, rhs: Self) -> Self {
@@ -319,5 +327,9 @@ impl<B: Backend + 'static> Tensor<B> {
 
     pub fn gt(self, rhs: Self) -> Self {
         Tensor::op(OpType::Gt, vec![&self, &rhs])
+    }
+
+    pub fn sqrt(self) -> Self {
+        Tensor::op(OpType::Sqrt, vec![&self])
     }
 }

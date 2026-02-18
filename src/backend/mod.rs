@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 pub mod ndarray;
 
-type Elm = f32;
+pub type Elm = f32;
 
 pub trait Backend: Clone + Debug {
     type Tensor: Clone + Debug;
@@ -24,6 +24,7 @@ pub trait Backend: Clone + Debug {
     fn add(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor;
     fn sub(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor;
     fn mul(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor; // 要素ごとの積
+    fn div(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor; // 要素ごとの商
     fn matmul(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor; // 行列積
 
     fn transpose(tensor: &Self::Tensor) -> Self::Tensor;
@@ -40,4 +41,5 @@ pub trait Backend: Clone + Debug {
     fn exp(a: &Self::Tensor) -> Self::Tensor;
     fn powi(a: &Self::Tensor, n: i32) -> Self::Tensor;
     fn gt(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor; // For ReLU grad
+    fn sqrt(a: &Self::Tensor) -> Self::Tensor;
 }

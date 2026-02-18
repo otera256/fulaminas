@@ -29,6 +29,7 @@ pub enum OpType {
     Add,
     Sub,
     Mul,
+    Div,
     Matmul,
     Transpose,
     Sum {
@@ -49,6 +50,7 @@ pub enum OpType {
         n: i32,
     },
     Gt,
+    Sqrt,
     /// 逆伝播時の勾配置換用（入力をそのまま出力する）
     Identity,
 }

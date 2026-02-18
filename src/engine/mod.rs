@@ -14,8 +14,10 @@ use self::{
 pub mod autodiff;
 pub mod executor;
 pub mod layer;
+pub mod loss;
 pub mod model;
 pub mod node;
+pub mod optimizer;
 pub mod shape;
 pub mod tensor;
 

@@ -2,7 +2,19 @@ use super::node::OpType;
 
 pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Option<Vec<usize>> {
     match op_type {
-        OpType::Add | OpType::Sub | OpType::Mul => {
+        OpType::Add | OpType::Sub => {
+            if input_shapes.len() != 2 {
+                return None;
+            }
+            broadcast_shape(input_shapes[0], input_shapes[1])
+        }
+        OpType::Mul => {
+            if input_shapes.len() != 2 {
+                return None;
+            }
+            broadcast_shape(input_shapes[0], input_shapes[1])
+        }
+        OpType::Div => {
             if input_shapes.len() != 2 {
                 return None;
             }
@@ -67,6 +79,12 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Option<V
                 return None;
             }
             broadcast_shape(input_shapes[0], input_shapes[1])
+        }
+        OpType::Sqrt => {
+            if input_shapes.len() != 1 {
+                return None;
+            }
+            Some(input_shapes[0].clone())
         }
     }
 }
