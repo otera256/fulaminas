@@ -1,6 +1,6 @@
 use std::{any::{Any, TypeId}, cell::RefCell, collections::HashMap};
 
-use crate::{backend::Backend, compute_graph::node::Node};
+use crate::{backend::Backend, engine::node::Node};
 
 pub mod node;
 pub mod tensor;
