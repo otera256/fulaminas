@@ -41,11 +41,29 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Result<V
             }
             compute_transpose_shape(input_shapes[0])
         }
-        OpType::Sum { axis } => {
+        OpType::Reshape { shape } => {
+            if input_shapes.len() != 1 {
+                return Err(format!(
+                    "Reshape requires 1 input, got {}",
+                    input_shapes.len()
+                ));
+            }
+            // Validate total elements
+            let input_total: usize = input_shapes[0].iter().product();
+            let output_total: usize = shape.iter().product();
+            if input_total != output_total {
+                return Err(format!(
+                    "Reshape mismatch: input total {} != output total {}",
+                    input_total, output_total
+                ));
+            }
+            Ok(shape.clone())
+        }
+        OpType::Sum { axis, keep_dims } => {
             if input_shapes.len() != 1 {
                 return Err(format!("Sum requires 1 input, got {}", input_shapes.len()));
             }
-            compute_sum_shape(input_shapes[0], *axis)
+            compute_sum_shape(input_shapes[0], *axis, *keep_dims)
         }
         OpType::Identity => {
             if input_shapes.len() != 1 {
@@ -137,7 +155,11 @@ fn broadcast_shape(a: &[usize], b: &[usize]) -> Result<Vec<usize>, String> {
         } else {
             return Err(format!(
                 "Broadcast error: dimension mismatch at index {} (from right): {} vs {} (shapes: {:?}, {:?})",
-                max_len - i - 1, a_dim, b_dim, a, b
+                max_len - i - 1,
+                a_dim,
+                b_dim,
+                a,
+                b
             ));
         }
     }
@@ -162,7 +184,10 @@ fn compute_matmul_shape(a: &[usize], b: &[usize]) -> Result<Vec<usize>, String> 
         if a[a_ndim - 1] != b[0] {
             return Err(format!(
                 "Matmul shape mismatch with broadcasting: inner dimensions MUST match. {:?} x {:?} ({} != {})",
-                a, b, a[a_ndim - 1], b[0]
+                a,
+                b,
+                a[a_ndim - 1],
+                b[0]
             ));
         }
         let mut out_shape = a.to_vec();
@@ -194,16 +219,30 @@ fn compute_transpose_shape(a: &[usize]) -> Result<Vec<usize>, String> {
     Ok(shape)
 }
 
-fn compute_sum_shape(a: &[usize], axis: Option<usize>) -> Result<Vec<usize>, String> {
+fn compute_sum_shape(
+    a: &[usize],
+    axis: Option<usize>,
+    keep_dims: bool,
+) -> Result<Vec<usize>, String> {
     match axis {
         Some(ax) => {
             if ax >= a.len() {
                 return Err(format!("Sum axis {} out of bounds for shape {:?}", ax, a));
             }
             let mut shape = a.to_vec();
-            shape.remove(ax);
+            if keep_dims {
+                shape[ax] = 1;
+            } else {
+                shape.remove(ax);
+            }
             Ok(shape)
         }
-        None => Ok(vec![]),
+        None => {
+            if keep_dims {
+                Ok(vec![1; a.len()])
+            } else {
+                Ok(vec![])
+            }
+        }
     }
 }

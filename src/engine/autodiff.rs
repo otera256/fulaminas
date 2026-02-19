@@ -128,6 +128,25 @@ pub fn expand_graph<B: Backend + 'static>() {
                     node_grads.entry(a.id).or_default().push(ga);
                     node_grads.entry(b.id).or_default().push(gb);
                 }
+                NodeType::Operation(OpType::Div) => {
+                    // z = a / b
+                    // dL/da = dL/dz * (1/b)
+                    // dL/db = dL/dz * (-a/b^2)
+                    let a = &input_tensors[0];
+                    let b = &input_tensors[1];
+
+                    let inv_b = b.clone().powi(-1);
+                    let dy_da = final_grad.clone() * inv_b.clone();
+
+                    let b_sq = b.clone().powi(2);
+                    let neg_a_div_b_sq = a.clone().neg() * b_sq.powi(-1);
+                    let dy_db = final_grad.clone() * neg_a_div_b_sq;
+
+                    let ga = handle_broadcast(&dy_da, a);
+                    let gb = handle_broadcast(&dy_db, b);
+                    node_grads.entry(a.id).or_default().push(ga);
+                    node_grads.entry(b.id).or_default().push(gb);
+                }
                 NodeType::Operation(OpType::Matmul) => {
                     // Z = A @ B の場合
                     // dL/dA = dL/dZ @ B^T
@@ -140,6 +159,13 @@ pub fn expand_graph<B: Backend + 'static>() {
                     node_grads.entry(a.id).or_default().push(dy_b_t);
                     node_grads.entry(b.id).or_default().push(a_t_dy);
                 }
+                NodeType::Operation(OpType::Neg) => {
+                    // z = -a
+                    // dL/da = -dL/dz
+                    let a = &input_tensors[0];
+                    let ga = final_grad.neg();
+                    node_grads.entry(a.id).or_default().push(ga);
+                }
                 NodeType::Operation(OpType::Transpose) => {
                     // z = a^T の場合
                     // dL/da = (dL/dz)^T
@@ -147,12 +173,40 @@ pub fn expand_graph<B: Backend + 'static>() {
                     let ga = final_grad.transpose();
                     node_grads.entry(a.id).or_default().push(ga);
                 }
-                NodeType::Operation(OpType::Sum { axis: _ }) => {
-                    // Sum操作の逆伝播は、勾配を元の形状にブロードキャスト（コピー）することに対応します。
-                    // 現在の実装では、後段の加算などでブロードキャスト処理が行われるため、
-                    // ここではそのまま伝播させています。（厳密にはReshapeが必要な場合もあります）
+                NodeType::Operation(OpType::Reshape { shape: _ }) => {
+                    // z = reshape(a)
+                    // dL/da = reshape(dL/dz, shape_of_a)
                     let a = &input_tensors[0];
-                    node_grads.entry(a.id).or_default().push(final_grad.clone());
+                    let a_shape =
+                        with_graph::<B, _, _>(|graph| graph.nodes[a.id].shape.clone().unwrap());
+                    let ga = final_grad.reshape(a_shape);
+                    node_grads.entry(a.id).or_default().push(ga);
+                }
+                NodeType::Operation(OpType::Sum { axis, keep_dims }) => {
+                    let a = &input_tensors[0];
+                    let mut grad = final_grad;
+
+                    // If dimensions were reduced, we need to restore them as 1s
+                    // to allow broadcasting against input 'a'.
+                    if !keep_dims {
+                        if let Some(ax) = axis {
+                            let mut g_shape = with_graph::<B, _, _>(|graph| {
+                                graph.nodes[grad.id]
+                                    .shape
+                                    .clone()
+                                    .expect("Grad has no shape")
+                            });
+                            g_shape.insert(ax, 1);
+                            grad = grad.reshape(g_shape);
+                        }
+                        // If axis=None, grad is scalar [], which broadcasts to anything.
+                    }
+
+                    // Broadcast to input shape
+                    let ones = Tensor::ones_like(a);
+                    let expanded_grad = ones * grad;
+
+                    node_grads.entry(a.id).or_default().push(expanded_grad);
                 }
                 NodeType::Operation(OpType::Identity) | NodeType::Operation(OpType::AddN) => {
                     // IdentityやAddNは勾配をそのまま伝播
@@ -224,33 +278,16 @@ pub fn expand_graph<B: Backend + 'static>() {
                     // grad_x = grad_y * J
                     // This is complex for elementwise AD.
                     // Simplified: dx_i = y_i (grad_i - sum(y_k * grad_k))
+                    // Softmax gradient: dx = y * (grad - sum(grad * y, axis=axis, keepdims=True))
                     let y = Tensor::from_id(node_id);
                     let gy = final_grad;
-                    let y_gy = y.clone() * gy.clone(); // y * grad
-                    let sum_y_gy = y_gy.sum(axis); // sum(y * grad)
-                                                   // To subtract this scalar/reduced tensor from vectors, we need broadcast.
-                                                   // Current sum implementation reduces dimension.
-                                                   // We need to keep dimension or rely on broadcast of `sub`.
-                                                   // If sum reduces shape, e.g. [2,3] -> [2], sub [2,3] - [2] works if [2] is treated as [2,1] or compatible.
-                                                   // Our broadcast logic handles it?
-                                                   // Let's check `shape.rs`. It handles basic broadcast.
-                                                   // But `sum` removes the axis. So [2,3] sum axis 1 -> [2].
-                                                   // [2,3] - [2] might fail if [2] aligns with dim 0.
-                                                   // We often need `keep_dims=True`.
+                    let y_gy = y.clone() * gy.clone();
 
-                    // Workaround: We don't have keep_dims in Sum op.
-                    // But we can reshape? Or just trust backend broadcast behavior?
-                    // For now, let's implement assuming broadcast works or standard simple Softmax grad.
+                    // We use sum_keepdims to ensure the result has shape [..., 1, ...] instead of dimension removal
+                    // This allows correct broadcasting in the subsequent subtraction (gy - sum_y_gy).
+                    let sum_y_gy = y_gy.sum_keepdims(axis);
 
-                    // Using the formula: grad_input = y * (grad - sum(grad * y))
-                    // We need `sum` to match dimensions.
-                    // If `axis` is None (all), sum is scalar []. [2,3] - [] works.
-                    // If `axis` is specified, we might have issue.
-                    // Let's leave a TODO/Note or try best effort.
-                    // The standard way is:
-                    // dx = y * (dy - sum(dy * y, axis=axis, keepdims=True))
-
-                    let grad = y.clone() * (gy - sum_y_gy); // This might need explicit broadcast/reshape
+                    let grad = y.clone() * (gy - sum_y_gy);
                     node_grads
                         .entry(input_tensors[0].id)
                         .or_default()
@@ -261,8 +298,8 @@ pub fn expand_graph<B: Backend + 'static>() {
                     // dy/dx = n * x^(n-1)
                     let x = Tensor::from_id(input_tensors[0].id);
                     let n_const = Tensor::new_const(B::from_vec(vec![n as f32], &[1])); // Create scalar const?
-                                                                                        // We don't have explicit Scalar mul yet, but we can broad cast.
-                                                                                        // Actually `OpType::Mul` works on tensors.
+                    // We don't have explicit Scalar mul yet, but we can broad cast.
+                    // Actually `OpType::Mul` works on tensors.
 
                     // Optimization: Use `powi(n-1)`
                     let nx_n_minus_1 = x.powi(n - 1) * n_const;

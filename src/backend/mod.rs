@@ -28,8 +28,10 @@ pub trait Backend: Clone + Debug {
     fn matmul(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor; // 行列積
 
     fn transpose(tensor: &Self::Tensor) -> Self::Tensor;
+    fn stack(tensors: &[Self::Tensor], axis: usize) -> Self::Tensor;
+    fn reshape(tensor: &Self::Tensor, shape: &[usize]) -> Self::Tensor;
 
-    fn sum(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor;
+    fn sum(a: &Self::Tensor, axis: Option<usize>, keep_dims: bool) -> Self::Tensor;
     fn max(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor;
 
     fn neg(a: &Self::Tensor) -> Self::Tensor;

@@ -1,7 +1,10 @@
-use fulaminas::backend::ndarray::NdArray;
 use fulaminas::backend::Backend;
+use fulaminas::backend::ndarray::NdArray;
 use fulaminas::engine::build;
-use fulaminas::engine::layer::{InitStrategy, Layer, Linear};
+use fulaminas::engine::layer::{
+    Layer,
+    linear::{InitStrategy, Linear},
+};
 use fulaminas::engine::tensor::Tensor;
 
 #[test]

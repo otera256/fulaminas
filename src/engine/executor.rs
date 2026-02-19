@@ -29,8 +29,15 @@ impl<B: Backend> Executor<B> {
             self.nodes[id].data = Some(data);
         }
 
+        // println!("Execution Order len: {}", self.excusion_order.len());
+        // println!("Loss node data before run: {:?}", self.nodes.iter().find(|n| match n.node_type { NodeType::Operation(op) => matches!(op, OpType::Div), _ => false }).and_then(|n| n.data.as_ref()));
+
         // トポロジカルソート順に実行
         for &node_id in &self.excusion_order {
+            // println!(
+            //     "Executing node: {} {:?}",
+            //     node_id, self.nodes[node_id].node_type
+            // );
             let node_type_info = self.nodes[node_id].node_type.clone();
             let mut output_data = None;
             let mut assign_target = None;
@@ -52,7 +59,10 @@ impl<B: Backend> Executor<B> {
                         OpType::Div => B::div(input_tensors[0], input_tensors[1]),
                         OpType::Matmul => B::matmul(input_tensors[0], input_tensors[1]),
                         OpType::Transpose => B::transpose(input_tensors[0]),
-                        OpType::Sum { axis } => B::sum(input_tensors[0], axis),
+                        OpType::Reshape { shape } => B::reshape(input_tensors[0], &shape),
+                        OpType::Sum { axis, keep_dims } => {
+                            B::sum(input_tensors[0], axis, keep_dims)
+                        }
                         OpType::Identity => input_tensors[0].clone(),
                         OpType::AddN => {
                             let mut sum = input_tensors[0].clone();

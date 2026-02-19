@@ -4,7 +4,8 @@ use std::io::Write;
 use fulaminas::backend::Backend;
 use fulaminas::backend::ndarray::NdArray;
 use fulaminas::engine::build;
-use fulaminas::engine::layer::{Layer, Linear};
+use fulaminas::engine::layer::linear::InitStrategy;
+use fulaminas::engine::layer::{Layer, linear::Linear};
 use fulaminas::engine::loss::CrossEntropyLoss;
 use fulaminas::engine::optimizer::{Optimizer, SGD};
 use fulaminas::engine::tensor::Tensor;
@@ -30,10 +31,9 @@ fn main() {
 
     // モデルの構築
     let x = Tensor::<NdArray>::new_input(vec![1, 2]);
-    let h1 =
-        Linear::new(2, 5, fulaminas::engine::layer::InitStrategy::XavierNormal).forward(x.clone());
+    let h1 = Linear::new(2, 5, InitStrategy::XavierNormal).forward(x.clone());
     let h2 = h1.tanh();
-    let h3 = Linear::new(5, 2, fulaminas::engine::layer::InitStrategy::XavierNormal).forward(h2);
+    let h3 = Linear::new(5, 2, InitStrategy::XavierNormal).forward(h2);
     // CrossEntropyLoss computes Softmax internally
     let y = h3;
 

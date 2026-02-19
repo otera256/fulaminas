@@ -232,10 +232,30 @@ impl<B: Backend + 'static> Tensor<B> {
         Tensor::op(OpType::Transpose, vec![&self])
     }
 
+    pub fn reshape(self, shape: Vec<usize>) -> Self {
+        Tensor::op(OpType::Reshape { shape }, vec![&self])
+    }
+
     /// 指定された軸で和をとります (Sum)。
     /// `None`の場合は全要素の和をとります。
     pub fn sum(self, axis: Option<usize>) -> Self {
-        Tensor::op(OpType::Sum { axis }, vec![&self])
+        Tensor::op(
+            OpType::Sum {
+                axis,
+                keep_dims: false,
+            },
+            vec![&self],
+        )
+    }
+
+    pub fn sum_keepdims(self, axis: Option<usize>) -> Self {
+        Tensor::op(
+            OpType::Sum {
+                axis,
+                keep_dims: true,
+            },
+            vec![&self],
+        )
     }
 
     /// 勾配計算ノード(`Grad`)を作成します。

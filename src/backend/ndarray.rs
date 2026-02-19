@@ -119,10 +119,39 @@ impl Backend for NdArray {
         tensor.t().to_owned()
     }
 
-    fn sum(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor {
+    fn stack(tensors: &[Self::Tensor], axis: usize) -> Self::Tensor {
+        let views: Vec<_> = tensors.iter().map(|t| t.view()).collect();
+        ndarray::stack(ndarray::Axis(axis), &views).unwrap()
+    }
+
+    fn reshape(tensor: &Self::Tensor, shape: &[usize]) -> Self::Tensor {
+        tensor.clone().into_shape(shape).unwrap()
+    }
+
+    fn sum(a: &Self::Tensor, axis: Option<usize>, keep_dims: bool) -> Self::Tensor {
         match axis {
-            Some(ax) => a.sum_axis(ndarray::Axis(ax)).into_dyn(),
-            None => ArrayD::from_elem(vec![], a.sum()),
+            Some(ax) => {
+                let mut res = a.sum_axis(ndarray::Axis(ax)).into_dyn();
+                if keep_dims {
+                    // 削除された軸を復活させる
+                    // ndarrayのsum_axisは次元を削除する
+                    // resのshapeは[A, C] (元が[A, B, C]でaxis=1なら)
+                    // ここにaxis=1でサイズ1の次元を挿入したい
+                    // insert_axisはviewを返すだけかな？into_shapeを使う。
+                    let mut new_shape = res.shape().to_vec();
+                    new_shape.insert(ax, 1);
+                    res = res.into_shape(new_shape).unwrap();
+                }
+                res
+            }
+            None => {
+                let val = a.sum();
+                if keep_dims {
+                    ArrayD::from_elem(vec![1; a.ndim()], val)
+                } else {
+                    ArrayD::from_elem(vec![], val)
+                }
+            }
         }
     }
 

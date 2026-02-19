@@ -3,7 +3,7 @@ use crate::backend::Backend;
 /// 計算グラフ内のノードID（インデックス）
 pub type NodeId = usize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeType {
     Input,
     Parameter,
@@ -13,7 +13,7 @@ pub enum NodeType {
     Grad { x: NodeId, y: NodeId },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpType {
     Add,
     Sub,
@@ -21,7 +21,13 @@ pub enum OpType {
     Div,
     Matmul,
     Transpose,
-    Sum { axis: Option<usize> },
+    Reshape {
+        shape: Vec<usize>,
+    },
+    Sum {
+        axis: Option<usize>,
+        keep_dims: bool,
+    },
     Identity,
     AddN,
     Neg,
@@ -29,10 +35,14 @@ pub enum OpType {
     Sigmoid,
     Tanh,
     ReLU,
-    Softmax { axis: Option<usize> },
+    Softmax {
+        axis: Option<usize>,
+    },
     Exp,
     Log,
-    Powi { n: i32 },
+    Powi {
+        n: i32,
+    },
     Gt,
     Sqrt,
 }
