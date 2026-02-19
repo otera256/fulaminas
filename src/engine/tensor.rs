@@ -115,7 +115,7 @@ impl<B: Backend + 'static> Tensor<B> {
 
             // 形状推論 (engine::shape::compute_shape を使用)
             let output_shape = crate::engine::shape::compute_shape(&op_type, &input_shape_refs)
-                .expect("Shape mismatch in operation");
+                .unwrap_or_else(|e| panic!("Shape mismatch in operation: {}", e));
 
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {

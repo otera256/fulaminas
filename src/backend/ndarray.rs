@@ -1,6 +1,6 @@
 use ndarray::{ArrayD, Dimension, IntoDimension, Ix2};
-use ndarray_rand::{rand_distr::Normal, RandomExt};
-use rand::{distributions::Uniform, rngs::StdRng, SeedableRng};
+use ndarray_rand::{RandomExt, rand_distr::Normal};
+use rand::{SeedableRng, distributions::Uniform, rngs::StdRng};
 
 use crate::backend::{Backend, Elm};
 
@@ -106,8 +106,11 @@ impl Backend for NdArray {
             output
         } else {
             panic!(
-                "Unsupported dimensions for matmul: A ndim={}, B ndim={}",
-                a_ndim, b_ndim
+                "Unsupported dimensions for matmul: A ndim={}, B ndim={} (shapes: {:?}, {:?})",
+                a_ndim,
+                b_ndim,
+                a.shape(),
+                b.shape()
             );
         }
     }
@@ -152,18 +155,6 @@ impl Backend for NdArray {
 
     fn softmax(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor {
         let axis = axis.unwrap_or_else(|| a.ndim() - 1);
-        let max = a.fold_axis(ndarray::Axis(axis), f32::NEG_INFINITY, |&acc, &x| {
-            acc.max(x)
-        });
-        // max shape reduced dimension, need to reshape to broadcast?
-        // ndarray broadcasting is implicit but dimensions must match.
-        // We need to keep dims for max to subtract.
-        // Actually computing softmax correctly with stability:
-        // exp(x - max) / sum(exp(x - max))
-
-        // Let's do stable:
-        // We need 'max' to have same dimensionality for substraction.
-        // Use map_axis to handle 1D subarrays which is easier.
         let mut out = a.clone();
         out.map_axis_mut(ndarray::Axis(axis), |mut view| {
             let max = view.fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));

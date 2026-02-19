@@ -23,7 +23,7 @@ pub mod tensor;
 
 #[derive(Debug, Clone)]
 pub struct GraphBuilder<B: Backend> {
-    nodes: Vec<Node<B>>,
+    pub nodes: Vec<Node<B>>,
 }
 
 thread_local! {
