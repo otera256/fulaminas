@@ -6,6 +6,8 @@ use crate::{
     },
 };
 
+use crate::engine::shape::{Rank1, Rank2, Shape};
+
 // Backend::Tensorとは異なり、グラフ構造を普通の演算のように構築できるようにするためのTensor構造体
 /// 計算グラフ上のノードへの参照（ハンドル）を表す構造体。
 ///
@@ -13,12 +15,22 @@ use crate::{
 /// 計算グラフ(`GraphBuilder`)内のノードID(`NodeId`)を保持します。
 /// これにより、ユーザーは`Tensor`同士の演算を行うだけで、自動的に計算グラフが構築されます。
 #[derive(Debug, Clone, Copy)]
-pub struct Tensor<B: Backend + 'static> {
+pub struct Tensor<B: Backend + 'static, S: Shape> {
     pub(crate) id: NodeId,
-    phantom: std::marker::PhantomData<B>,
+    phantom: std::marker::PhantomData<(B, S)>,
 }
 
-impl<B: Backend + 'static> Tensor<B> {
+pub trait TensorHandle {
+    fn id(&self) -> NodeId;
+}
+
+impl<B: Backend + 'static, S: Shape> TensorHandle for Tensor<B, S> {
+    fn id(&self) -> NodeId {
+        self.id
+    }
+}
+
+impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
     pub fn id(&self) -> NodeId {
         self.id
     }
@@ -30,10 +42,16 @@ impl<B: Backend + 'static> Tensor<B> {
         }
     }
 
+    /// Converts this tensor to a Dynamic tensor.
+    pub fn to_dynamic(&self) -> Tensor<B, crate::engine::shape::Dynamic> {
+        Tensor::from_id(self.id)
+    }
+
     /// 入力プレースホルダーを作成します。
     ///
     /// 実行時(`Executor::run`)に外部からデータを与えるためのノードです。
-    pub fn new_input(shape: Vec<usize>) -> Tensor<B> {
+    pub fn new_input() -> Self {
+        let shape = Self::default_shape();
         let node_id = with_graph::<B, _, _>(|graph| {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
@@ -45,17 +63,48 @@ impl<B: Backend + 'static> Tensor<B> {
             });
             new_node_id
         });
-        Tensor::<B> {
-            id: node_id,
-            phantom: std::marker::PhantomData,
-        }
+        Self::from_id(node_id)
+    }
+
+    pub fn new_input_dynamic(shape: Vec<usize>) -> Tensor<B, crate::engine::shape::Dynamic> {
+        let node_id = with_graph::<B, _, _>(|graph| {
+            let new_node_id = graph.nodes.len();
+            graph.nodes.push(Node {
+                id: new_node_id,
+                node_type: NodeType::Input,
+                inputs: Vec::new(),
+                data: None,
+                shape: Some(shape),
+            });
+            new_node_id
+        });
+        Tensor::from_id(node_id)
+    }
+
+    fn default_shape() -> Vec<usize> {
+        // dummy instance to call trait method? No, trait methods are on instances.
+        // We need S to be default constructible or just use types.
+        // Shape trait has no static method for shape.
+        // But we added to_vec(&self).
+        // Since S: Default (Rank structs derive Default), we can do:
+        S::default().to_vec()
     }
 
     /// 学習可能なパラメータを作成します。
     ///
     /// 内部にデータを保持し、学習によって更新される可能性のあるノードです。
-    pub fn new_parameter(data: B::Tensor) -> Tensor<B> {
+    pub fn new_parameter(data: B::Tensor) -> Self {
         let shape = B::shape(&data);
+        if !S::is_dynamic() {
+            let s_shape = Self::default_shape();
+            if shape != s_shape {
+                panic!(
+                    "Parameter data shape {:?} does not match Generic Shape {:?}",
+                    shape, s_shape
+                );
+            }
+        }
+
         let node_id = with_graph::<B, _, _>(|graph| {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
@@ -67,17 +116,24 @@ impl<B: Backend + 'static> Tensor<B> {
             });
             new_node_id
         });
-        Tensor::<B> {
-            id: node_id,
-            phantom: std::marker::PhantomData,
-        }
+        Self::from_id(node_id)
     }
 
     /// 定数ノードを作成します。
     ///
     /// パラメータとは異なり、学習によって更新されない固定値を持つノードです。
-    pub fn new_const(data: B::Tensor) -> Tensor<B> {
+    pub fn new_const(data: B::Tensor) -> Self {
         let shape = B::shape(&data);
+        if !S::is_dynamic() {
+            let s_shape = Self::default_shape();
+            if shape != s_shape {
+                panic!(
+                    "Const data shape {:?} does not match Generic Shape {:?}",
+                    shape, s_shape
+                );
+            }
+        }
+
         let node_id = with_graph::<B, _, _>(|graph| {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
@@ -89,58 +145,77 @@ impl<B: Backend + 'static> Tensor<B> {
             });
             new_node_id
         });
-        Tensor::<B> {
-            id: node_id,
-            phantom: std::marker::PhantomData,
-        }
+        Self::from_id(node_id)
     }
 
     /// 新しい演算ノードをグラフに追加するための内部ヘルパー関数
-    pub fn op(op_type: OpType, inputs: Vec<&Tensor<B>>) -> Tensor<B> {
+    ///
+    /// OutputShapeを指定してノードを作成します。
+    pub fn op<OutS: Shape + Default>(
+        op_type: OpType,
+        inputs: Vec<&Tensor<B, S>>,
+    ) -> Tensor<B, OutS> {
+        Self::op_ids(op_type, inputs.iter().map(|t| t.id).collect())
+    }
+
+    /// Heterogeneous inputs version of op
+    pub fn op_slice<OutS: Shape + Default>(
+        op_type: OpType,
+        inputs: &[&dyn TensorHandle],
+    ) -> Tensor<B, OutS> {
+        Self::op_ids(op_type, inputs.iter().map(|t| t.id()).collect())
+    }
+
+    /// Internal helper taking NodeIds directly
+    pub(crate) fn op_ids<OutS: Shape + Default>(
+        op_type: OpType,
+        input_ids: Vec<NodeId>,
+    ) -> Tensor<B, OutS> {
         // グラフビルダーに新しいノードを追加して、そのIDを取得する
         let node_id = with_graph::<B, _, _>(|graph| {
-            // 入力の形状を取得
-            let input_shapes: Vec<Vec<usize>> = inputs
+            // 形状推論 (runtime validation)
+            let input_shapes: Vec<Vec<usize>> = input_ids
                 .iter()
-                .map(|t| {
-                    graph.nodes[t.id]
+                .map(|&id| {
+                    graph.nodes[id]
                         .shape
                         .clone()
                         .expect("Input node has no shape")
                 })
                 .collect();
-
-            // 参照のベクタを作成
             let input_shape_refs: Vec<&Vec<usize>> = input_shapes.iter().collect();
 
-            // 形状推論 (engine::shape::compute_shape を使用)
             let output_shape = crate::engine::shape::compute_shape(&op_type, &input_shape_refs)
                 .unwrap_or_else(|e| panic!("Shape mismatch in operation: {}", e));
+
+            // Verify that validated runtime shape matches OutS
+            if !OutS::is_dynamic() {
+                let expected_shape = OutS::default().to_vec();
+                if output_shape != expected_shape {
+                    panic!(
+                        "Runtime shape {:?} != Type shape {:?}",
+                        output_shape, expected_shape
+                    );
+                }
+            }
 
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
                 node_type: NodeType::Operation(op_type),
-                inputs: inputs.iter().map(|&tensor| tensor.id).collect(),
+                inputs: input_ids,
                 data: None,
                 shape: Some(output_shape),
             });
             new_node_id
         });
-        Tensor::<B> {
-            id: node_id,
-            phantom: std::marker::PhantomData,
-        }
+        Tensor::<B, OutS>::from_id(node_id)
     }
 
     /// 代入ノードをグラフに追加します。
-    ///
-    /// `target`テンソルに`value`テンソルの値を代入する操作を表します。
-    /// RNNやオプティマイザーの更新ルールなど、ループ内で変数を更新する必要がある場合に使用します。
-    /// `depth`はループのネストレベルなど、実行順序制御に使用される可能性があります。
-    pub fn assign(target: &Tensor<B>, value: &Tensor<B>, depth: usize) -> Tensor<B> {
+    pub fn assign(target: &Tensor<B, S>, value: &Tensor<B, S>, depth: usize) -> Tensor<B, S> {
         let node_id = with_graph::<B, _, _>(|graph| {
-            // 形状チェック
+            // 形状チェック (Runtime)
             let target_shape = graph.nodes[target.id]
                 .shape
                 .as_ref()
@@ -170,47 +245,46 @@ impl<B: Backend + 'static> Tensor<B> {
             });
             new_node_id
         });
-        Tensor::<B> {
-            id: node_id,
-            phantom: std::marker::PhantomData,
-        }
+        Tensor::<B, S>::from_id(node_id)
     }
 }
 
 // 演算のオーバーロード
-impl<B: Backend + 'static> std::ops::Add for Tensor<B> {
-    type Output = Tensor<B>;
+// 演算のオーバーロード
+impl<B: Backend + 'static, S: Shape + Default> std::ops::Add for Tensor<B, S> {
+    type Output = Tensor<B, S>;
 
     fn add(self, rhs: Self) -> Self::Output {
+        // 同じShapeのみ許可
         Tensor::op(OpType::Add, vec![&self, &rhs])
     }
 }
 
-impl<B: Backend + 'static> std::ops::Sub for Tensor<B> {
-    type Output = Tensor<B>;
+impl<B: Backend + 'static, S: Shape + Default> std::ops::Sub for Tensor<B, S> {
+    type Output = Tensor<B, S>;
 
     fn sub(self, rhs: Self) -> Self::Output {
         Tensor::op(OpType::Sub, vec![&self, &rhs])
     }
 }
 
-impl<B: Backend + 'static> std::ops::Mul for Tensor<B> {
-    type Output = Tensor<B>;
+impl<B: Backend + 'static, S: Shape + Default> std::ops::Mul for Tensor<B, S> {
+    type Output = Tensor<B, S>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         Tensor::op(OpType::Mul, vec![&self, &rhs])
     }
 }
 
-impl<B: Backend + 'static> std::ops::Div for Tensor<B> {
-    type Output = Tensor<B>;
+impl<B: Backend + 'static, S: Shape + Default> std::ops::Div for Tensor<B, S> {
+    type Output = Tensor<B, S>;
 
     fn div(self, rhs: Self) -> Self::Output {
         Tensor::op(OpType::Div, vec![&self, &rhs])
     }
 }
 
-impl<B: Backend + 'static> Tensor<B> {
+impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
     // メソッドとしても和差積を定義しておくと、演算子オーバーロードと両方使えるので便利
     pub fn add(self, rhs: Self) -> Self {
         Tensor::op(OpType::Add, vec![&self, &rhs])
@@ -232,14 +306,38 @@ impl<B: Backend + 'static> Tensor<B> {
         Tensor::op(OpType::Transpose, vec![&self])
     }
 
-    pub fn reshape(self, shape: Vec<usize>) -> Self {
-        Tensor::op(OpType::Reshape { shape }, vec![&self])
+    pub fn reshape<NewS: Shape + Default>(self) -> Tensor<B, NewS> {
+        let shape = NewS::default().to_vec();
+        Self::op_ids(OpType::Reshape { shape }, vec![self.id])
+    }
+
+    pub fn reshape_dynamic(self, shape: Vec<usize>) -> Tensor<B, crate::engine::shape::Dynamic> {
+        Self::op_ids::<crate::engine::shape::Dynamic>(OpType::Reshape { shape }, vec![self.id])
+    }
+
+    pub fn broadcast<NewS: Shape + Default>(self) -> Tensor<B, NewS> {
+        let shape = NewS::default().to_vec();
+        Self::op_ids(OpType::Broadcast { shape }, vec![self.id])
+    }
+
+    pub fn broadcast_dynamic(self, shape: Vec<usize>) -> Tensor<B, crate::engine::shape::Dynamic> {
+        Self::op_ids::<crate::engine::shape::Dynamic>(OpType::Broadcast { shape }, vec![self.id])
     }
 
     /// 指定された軸で和をとります (Sum)。
     /// `None`の場合は全要素の和をとります。
     pub fn sum(self, axis: Option<usize>) -> Self {
         Tensor::op(
+            OpType::Sum {
+                axis,
+                keep_dims: false,
+            },
+            vec![&self],
+        )
+    }
+
+    pub fn sum_as<OutS: Shape + Default>(self, axis: Option<usize>) -> Tensor<B, OutS> {
+        Tensor::op::<OutS>(
             OpType::Sum {
                 axis,
                 keep_dims: false,
@@ -259,10 +357,7 @@ impl<B: Backend + 'static> Tensor<B> {
     }
 
     /// 勾配計算ノード(`Grad`)を作成します。
-    ///
-    /// `self` (y) を `x` で微分した勾配 (dy/dx) を計算するリクエストをグラフに追加します。
-    /// 実際の勾配計算はグラフ構築後(`GraphBuilder::build`)の自動微分フェーズで行われます。
-    pub fn grad(&self, x: &Tensor<B>) -> Tensor<B> {
+    pub fn grad<SX: Shape + Default>(&self, x: &Tensor<B, SX>) -> Tensor<B, SX> {
         let node_id = with_graph::<B, _, _>(|graph| {
             // 形状チェック
             let x_shape = graph.nodes[x.id]
@@ -278,21 +373,18 @@ impl<B: Backend + 'static> Tensor<B> {
                     x: x.id,
                     y: self.id,
                 },
-                inputs: vec![], // Grad node explicitly depends on nothing in forward pass, but implicitly on graph
+                inputs: vec![], // Grad node explicitly depends on nothing in forward pass
                 data: None,
                 shape: Some(x_shape.clone()),
             });
             new_node_id
         });
-        Tensor::<B> {
-            id: node_id,
-            phantom: std::marker::PhantomData,
-        }
+        Tensor::<B, SX>::from_id(node_id)
     }
 
     /// 複数のTensorの和を効率的に計算するノードを作成します。
     pub fn add_n(tensors: Vec<Self>) -> Self {
-        let refs: Vec<&Tensor<B>> = tensors.iter().collect();
+        let refs: Vec<&Tensor<B, S>> = tensors.iter().collect();
         Tensor::op(OpType::AddN, refs)
     }
 
@@ -351,5 +443,28 @@ impl<B: Backend + 'static> Tensor<B> {
 
     pub fn sqrt(self) -> Self {
         Tensor::op(OpType::Sqrt, vec![&self])
+    }
+}
+
+// Specialized implementations for Rank2 (Matrix)
+impl<B: Backend + 'static, const M: usize, const K: usize> Tensor<B, Rank2<M, K>> {
+    /// Statically checked matrix multiplication.
+    /// (M, K) x (K, N) -> (M, N)
+    pub fn matmul_static<const N: usize>(
+        self,
+        rhs: Tensor<B, Rank2<K, N>>,
+    ) -> Tensor<B, Rank2<M, N>> {
+        Tensor::<B, Rank2<M, K>>::op_slice::<Rank2<M, N>>(OpType::Matmul, &[&self, &rhs])
+    }
+}
+
+// Specialized implementations for Rank2 (Matrix) + Bias (Rank1)
+impl<B: Backend + 'static, const M: usize, const N: usize> std::ops::Add<Tensor<B, Rank1<N>>>
+    for Tensor<B, Rank2<M, N>>
+{
+    type Output = Tensor<B, Rank2<M, N>>;
+
+    fn add(self, rhs: Tensor<B, Rank1<N>>) -> Self::Output {
+        Tensor::<B, Rank2<M, N>>::op_slice::<Rank2<M, N>>(OpType::Add, &[&self, &rhs])
     }
 }

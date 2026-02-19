@@ -1,5 +1,89 @@
 use super::node::OpType;
 
+pub trait Shape: Clone + std::fmt::Debug + Send + Sync + 'static {
+    type Array;
+    fn as_array(&self) -> Self::Array;
+    fn to_vec(&self) -> Vec<usize>;
+    fn is_dynamic() -> bool {
+        false
+    }
+}
+
+#[derive(Clone, Debug, Copy, Default)]
+pub struct Dynamic;
+impl Shape for Dynamic {
+    type Array = Vec<usize>;
+    fn as_array(&self) -> Self::Array {
+        vec![]
+    }
+    fn to_vec(&self) -> Vec<usize> {
+        vec![]
+    }
+    fn is_dynamic() -> bool {
+        true
+    }
+}
+
+#[derive(Clone, Debug, Copy, Default)]
+pub struct Rank0;
+impl Shape for Rank0 {
+    type Array = [usize; 0];
+    fn as_array(&self) -> Self::Array {
+        []
+    }
+    fn to_vec(&self) -> Vec<usize> {
+        vec![]
+    }
+}
+
+#[derive(Clone, Debug, Copy, Default)]
+pub struct Rank1<const M: usize>;
+impl<const M: usize> Shape for Rank1<M> {
+    type Array = [usize; 1];
+    fn as_array(&self) -> Self::Array {
+        [M]
+    }
+    fn to_vec(&self) -> Vec<usize> {
+        vec![M]
+    }
+}
+
+#[derive(Clone, Debug, Copy, Default)]
+pub struct Rank2<const M: usize, const N: usize>;
+impl<const M: usize, const N: usize> Shape for Rank2<M, N> {
+    type Array = [usize; 2];
+    fn as_array(&self) -> Self::Array {
+        [M, N]
+    }
+    fn to_vec(&self) -> Vec<usize> {
+        vec![M, N]
+    }
+}
+
+#[derive(Clone, Debug, Copy, Default)]
+pub struct Rank3<const B: usize, const M: usize, const N: usize>;
+impl<const B: usize, const M: usize, const N: usize> Shape for Rank3<B, M, N> {
+    type Array = [usize; 3];
+    fn as_array(&self) -> Self::Array {
+        [B, M, N]
+    }
+    fn to_vec(&self) -> Vec<usize> {
+        vec![B, M, N]
+    }
+}
+
+#[derive(Clone, Debug, Copy, Default)]
+pub struct Rank4<const B: usize, const C: usize, const H: usize, const W: usize>;
+impl<const B: usize, const C: usize, const H: usize, const W: usize> Shape for Rank4<B, C, H, W> {
+    type Array = [usize; 4];
+    fn as_array(&self) -> Self::Array {
+        [B, C, H, W]
+    }
+    fn to_vec(&self) -> Vec<usize> {
+        vec![B, C, H, W]
+    }
+}
+
 pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Result<Vec<usize>, String> {
     match op_type {
         OpType::Add | OpType::Sub => {
@@ -55,6 +139,23 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Result<V
                 return Err(format!(
                     "Reshape mismatch: input total {} != output total {}",
                     input_total, output_total
+                ));
+            }
+            Ok(shape.clone())
+        }
+        OpType::Broadcast { shape } => {
+            if input_shapes.len() != 1 {
+                return Err(format!(
+                    "Broadcast requires 1 input, got {}",
+                    input_shapes.len()
+                ));
+            }
+            let input_shape = input_shapes[0];
+            let common = broadcast_shape(input_shape, shape)?;
+            if &common != shape {
+                return Err(format!(
+                    "Cannot broadcast {:?} to target {:?}. Result would be {:?}",
+                    input_shape, shape, common
                 ));
             }
             Ok(shape.clone())

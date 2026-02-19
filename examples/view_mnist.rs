@@ -1,8 +1,10 @@
 use fulaminas::{
     backend::{Backend, ndarray::NdArray},
     data::{loader::DataLoader, mnist::Mnist},
-    engine::tensor::Tensor,
+    engine::{shape::Dynamic, tensor::Tensor},
 };
+
+type DTensor = Tensor<NdArray, Dynamic>;
 
 fn main() {
     let mnist = Mnist::new(
@@ -19,7 +21,7 @@ fn main() {
         // Tensor::new_const expects B::Tensor. B is NdArray.
         // So this is correct.
         let image_data = <NdArray as Backend>::from_vec(vec, &[1, 28, 28]);
-        let image_tensor = Tensor::<NdArray>::new_const(image_data);
+        let image_tensor = DTensor::new_const(image_data);
         fulaminas::vis::save_image(&image_tensor, &format!("image_{}_label_{}.png", i, label))
             .unwrap();
     }

@@ -30,6 +30,7 @@ pub trait Backend: Clone + Debug {
     fn transpose(tensor: &Self::Tensor) -> Self::Tensor;
     fn stack(tensors: &[Self::Tensor], axis: usize) -> Self::Tensor;
     fn reshape(tensor: &Self::Tensor, shape: &[usize]) -> Self::Tensor;
+    fn broadcast(tensor: &Self::Tensor, shape: &[usize]) -> Self::Tensor;
 
     fn sum(a: &Self::Tensor, axis: Option<usize>, keep_dims: bool) -> Self::Tensor;
     fn max(a: &Self::Tensor, axis: Option<usize>) -> Self::Tensor;

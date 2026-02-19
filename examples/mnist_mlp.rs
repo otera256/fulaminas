@@ -1,14 +1,23 @@
-// MNISTとFashionMNISTをMLPで学習させる
+// MNIST and FashionMNIST MLP with Static Shapes
 
+use fulaminas::backend::Backend;
 use fulaminas::backend::ndarray::NdArray;
 use fulaminas::data::loader::DataLoader;
 use fulaminas::data::mnist::Mnist;
 use fulaminas::engine::build;
-use fulaminas::engine::layer::linear::InitStrategy;
-use fulaminas::engine::layer::{Layer, linear::Linear};
+use fulaminas::engine::layer::linear::{InitStrategy, Linear};
 use fulaminas::engine::loss::CrossEntropyLoss;
 use fulaminas::engine::optimizer::{Optimizer, SGD};
+use fulaminas::engine::shape::{Rank0, Rank1, Rank2, Rank4};
 use fulaminas::engine::tensor::Tensor;
+
+// Define constraints for network
+const BATCH_SIZE: usize = 256;
+const IN_FEATURES: usize = 784;
+const HIDDEN_1: usize = 256;
+const HIDDEN_2: usize = 128;
+const HIDDEN_3: usize = 64;
+const CLASSES: usize = 10;
 
 fn main() {
     let mnist = Mnist::new(
@@ -18,61 +27,70 @@ fn main() {
         fulaminas::data::mnist::MnistVariant::Mnist,
     )
     .unwrap();
-    let mnist_loader = DataLoader::new(&mnist, 256, true);
+    let mnist_loader = DataLoader::new(&mnist, BATCH_SIZE, true);
 
-    // Explicit batch size of 256
-    let x = Tensor::<NdArray>::new_input(vec![256, 1, 28, 28]); // 4D Input in graph
-    let target = Tensor::<NdArray>::new_input(vec![256, 10]);
-    let mask = Tensor::<NdArray>::new_input(vec![256, 1]); // Mask input
+    // Static Input Tensors
+    // x: [Batch, 1, 28, 28] -> Rank4
+    let x = Tensor::<NdArray, Rank4<BATCH_SIZE, 1, 28, 28>>::new_input();
+    let target = Tensor::<NdArray, Rank2<BATCH_SIZE, CLASSES>>::new_input();
 
-    // Flatten: [256, 1, 28, 28] -> [256, 784]
-    let x_flat = x.clone().reshape(vec![256, 784]);
+    // Flatten: [Batch, 1, 28, 28] -> [Batch, 784]
+    // Use reshape with explicit static target type
+    // Clone x because reshape consumes it, but we need x for feeding input
+    let x_flat = x.clone().reshape::<Rank2<BATCH_SIZE, IN_FEATURES>>();
 
-    let h1 = Linear::new(784, 256, InitStrategy::XavierNormal).forward(x_flat);
-    let h2 = h1.relu();
-    let h3 = Linear::new(256, 128, InitStrategy::XavierNormal).forward(h2);
-    let h4 = h3.relu();
-    let h5 = Linear::new(128, 64, InitStrategy::XavierNormal).forward(h4);
-    let h6 = h5.relu();
-    let h7 = Linear::new(64, 10, InitStrategy::XavierNormal).forward(h6);
-    let y = h7;
+    // Layers (Static)
+    // Linear::<Backend, Input, Output>
+    let layer1 = Linear::<NdArray, IN_FEATURES, HIDDEN_1>::new(InitStrategy::XavierNormal);
+    let layer2 = Linear::<NdArray, HIDDEN_1, HIDDEN_2>::new(InitStrategy::XavierNormal);
+    let layer3 = Linear::<NdArray, HIDDEN_2, HIDDEN_3>::new(InitStrategy::XavierNormal);
+    let layer4 = Linear::<NdArray, HIDDEN_3, CLASSES>::new(InitStrategy::XavierNormal);
 
-    // Use unreduced loss (vector [256])
-    let loss_vec =
-        CrossEntropyLoss::new_with_reduction(fulaminas::engine::loss::LossReduction::None)
-            .forward(y, target.clone());
+    // Forward pass
+    // Note: linear.forward(x) expects Tensor<B, Rank2<Batch, In>>
+    let h1 = layer1.forward(x_flat).relu();
+    let h2 = layer2.forward(h1).relu();
+    let h3 = layer3.forward(h2).relu();
+    let y = layer4.forward(h3);
 
-    // Apply mask: loss_vec * mask -> [256] (zeros for padded samples)
-    // Broadcasting: [256] * [256, 1] -> [256, 1]?
-    // loss_vec is [256]. mask is [256, 1].
-    // We need to reshape loss_vec to [256, 1] or mask to [256].
-    // Let's reshape mask to [256].
-    let mask_flat = mask.clone().reshape(vec![256]);
-    let masked_loss = loss_vec * mask_flat.clone();
+    println!("Graph built with Static Shapes.");
 
-    // Mean over valid samples: sum(masked_loss) / sum(mask)
-    // sum(mask) gives the count of valid samples.
-    // We use a small epsilon to avoid div by zero if batch is empty (unlikely).
-    let valid_count = mask_flat.sum(None);
-    let total_loss = masked_loss.sum(None);
-    let loss = total_loss / valid_count; // Scalar loss
+    // Loss
+    // Returns [Batch, Classes] (element-wise nll)
+    let elem_loss = CrossEntropyLoss::new().forward(y, target.clone());
+
+    // Reduce to [Batch] (sum over classes)
+    // Rank2<B, C> -> Rank1<B>
+    // We use sum_as with axis=1.
+    let loss_per_sample = elem_loss.sum_as::<Rank1<BATCH_SIZE>>(Some(1));
+
+    // Reduce to scalar (Mean)
+    // sum_as::<Rank0> (Total loss)
+    let total_loss = loss_per_sample.sum_as::<Rank0>(None);
+
+    // Scale by 1/BATCH_SIZE
+    let scale =
+        Tensor::<NdArray, Rank0>::new_const(NdArray::from_vec(vec![1.0 / BATCH_SIZE as f32], &[]));
+
+    let loss = total_loss * scale;
 
     let mut optimizer = SGD::new(0.1);
+    // optimizer.step requires Tensor<B, S>
     optimizer.step(&loss);
 
     let mut executor = build::<NdArray>();
 
     for epoch in 0..10 {
-        for (i, (input_val_4d, target_val, mask_val)) in mnist_loader
+        for (i, (input_val_4d, target_val, _mask_val)) in mnist_loader
             .iter()
-            .map(|b| fulaminas::data::collate::mnist_collate_padded::<NdArray>(b, 256))
+            .map(|b| fulaminas::data::collate::mnist_collate_padded::<NdArray>(b, BATCH_SIZE))
             .enumerate()
         {
-            executor.run(vec![
-                (x.clone(), input_val_4d),
-                (target.clone(), target_val),
-                (mask.clone(), mask_val),
-            ]);
+            // Execute with data
+            // We need to provide data for inputs
+            // Tensor::new_input() creates an Input node.
+
+            executor.run(vec![(x.id(), input_val_4d), (target.id(), target_val)]);
 
             if i % 100 == 0 {
                 // Loss is a scalar tensor
@@ -81,9 +99,7 @@ fn main() {
                     "Epoch: {}, Iter: {}, Loss: {}",
                     epoch,
                     i,
-                    loss_val
-                        .get(ndarray::IxDyn(&[]))
-                        .unwrap_or(&loss_val.first().unwrap())
+                    loss_val.to_string()
                 );
             }
         }

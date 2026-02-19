@@ -45,6 +45,9 @@ pub enum OpType {
     },
     Gt,
     Sqrt,
+    Broadcast {
+        shape: Vec<usize>,
+    },
 }
 
 #[derive(Debug, Clone)]

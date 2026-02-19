@@ -5,61 +5,68 @@ use fulaminas::engine::layer::{
     Layer,
     linear::{InitStrategy, Linear},
 };
+use fulaminas::engine::shape::{Rank1, Rank2};
 use fulaminas::engine::tensor::Tensor;
 
 #[test]
 fn test_linear_forward_shape() {
-    let in_features = 3;
-    let out_features = 2;
-    let layer = Linear::<NdArray>::new(in_features, out_features, InitStrategy::XavierNormal);
+    const IN_FEATURES: usize = 3;
+    const OUT_FEATURES: usize = 2;
+    const BATCH: usize = 4;
+
+    let layer = Linear::<NdArray, IN_FEATURES, OUT_FEATURES>::new(InitStrategy::XavierNormal);
 
     // Batch size 4, input features 3 -> [4, 3]
     let x_data = NdArray::from_vec(
         vec![
             1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
         ],
-        &[4, 3],
+        &[BATCH, IN_FEATURES],
     );
-    let x = Tensor::<NdArray>::new_input(vec![4, 3]);
+    // Static input
+    let x = Tensor::<NdArray, Rank2<BATCH, IN_FEATURES>>::new_input();
 
     let y = layer.forward(x.clone());
 
+    // Result must be assigned to be computed by executor
+    let y_out = Tensor::<NdArray, Rank2<BATCH, OUT_FEATURES>>::new_parameter(NdArray::zeros(&[
+        BATCH,
+        OUT_FEATURES,
+    ]));
+    let _ = Tensor::assign(&y_out, &y, 0);
+
     // Output should be [4, 2]
     // We need to force execution to check shape/result
-    let y_out = Tensor::<NdArray>::new_parameter(NdArray::zeros(&[4, 2]));
-    let _assign = Tensor::assign(&y_out, &y, 0);
+    // The result y is static Tensor<NdArray, Rank2<4, 2>>.
 
     let mut executor = build::<NdArray>();
-    executor.run(vec![(x, x_data)]);
+    executor.run(vec![(x.id(), x_data)]);
 
     let y_val = executor.get_node_data(y.id()).unwrap();
     let shape = NdArray::shape(&y_val);
-    assert_eq!(shape, vec![4, 2]);
+    assert_eq!(shape, vec![BATCH, OUT_FEATURES]);
 }
 
 #[test]
 fn test_linear_initialization_stats() {
     // Large enough to check statistics
-    let in_features = 100;
-    let out_features = 100;
+    const IN_FEATURES: usize = 100;
+    const OUT_FEATURES: usize = 100;
 
     // HeNormal: std = sqrt(2/in) = sqrt(0.02) ~= 0.1414
-    let layer = Linear::<NdArray>::new(in_features, out_features, InitStrategy::HeNormal);
+    let layer = Linear::<NdArray, IN_FEATURES, OUT_FEATURES>::new(InitStrategy::HeNormal);
+    // parameters() returns Vec<DTensor>.
+    // Linear implementation of Layer trait converts static to dynamic.
     let params = layer.parameters();
-    let w = &params[0]; // weight
+    let w = &params[0]; // weight (Dynamic)
     let _b = &params[1]; // bias
 
-    // We can't easily get data from Tensor without running a graph,
-    // but parameters created with new_parameter should have data immediately available
-    // IF we could access it.
-    // However, Tensor architecture might hide it in GraphBuilder.
-    // Actually, `Tensor::new_parameter` creates a Node with data.
+    // We can't easily get data from Tensor without running a graph.
+    // But parameters created with new_parameter (inside Linear::new) have data.
     // We can use a dummy graph to retrieve it.
 
-    let w_out = Tensor::<NdArray>::new_parameter(NdArray::zeros(&[in_features, out_features]));
-    let _assign = Tensor::assign(&w_out, w, 0);
-
     let mut executor = build::<NdArray>();
+    // No inputs needed just to read params
     executor.run(vec![]);
 
     let w_val = executor.get_node_data(w.id()).unwrap();
@@ -86,41 +93,71 @@ fn test_linear_initialization_stats() {
 
 #[test]
 fn test_linear_backward() {
-    let in_features = 2;
-    let out_features = 1;
-    let layer = Linear::<NdArray>::new(in_features, out_features, InitStrategy::XavierUniform);
+    const IN_FEATURES: usize = 2;
+    const OUT_FEATURES: usize = 1;
+    let layer = Linear::<NdArray, IN_FEATURES, OUT_FEATURES>::new(InitStrategy::XavierUniform);
 
     let x_data = NdArray::from_vec(vec![1.0, 2.0], &[1, 2]);
-    let x = Tensor::<NdArray>::new_input(vec![1, 2]);
+    let x = Tensor::<NdArray, Rank2<1, 2>>::new_input();
 
     let y = layer.forward(x.clone());
 
     // Loss = y^2
     let loss = y.clone() * y.clone();
 
+    // loss is Rank2<1, 1>.
+    // To get gradients, we call loss.grad(&w).
+    // But w is inside layer. `layer` struct has `w` field but private?
+    // We can use `layer.parameters()` to get dynamic handles.
+    // `Tensor::grad` works on generic `Tensor`.
+    // But `loss` is static Tensor. `params` are dynamic tensors (returned by parameters()).
+    // If we want grad w.r.t static parameter, we need access to it.
+    // `Linear` fields are private.
+    // BUT `Tensor::grad` takes `&T` where `T` is `Tensor`.
+    // We can cast `loss` to dynamic, or cast params to static?
+    // Actually, `Linear` struct definition: `w: Tensor<B, Rank2<I, O>>`.
+    // If fields are private, we can't access `layer.w` in tests unless we make them pub or use accessors.
+    // `parameters()` returns clones/conversions to dynamic.
+    // If we use `loss.grad(&param_dyn)`, does it work?
+    // `loss` is `Tensor<B, S>`. `param_dyn` is `Tensor<B, Dynamic>`.
+    // `id()` matches.
+    // `grad` implementation:
+    // `pub fn grad<S2: Shape>(&self, target: &Tensor<B, S2>) -> Tensor<B, S2>`?
+    // `Tensor::grad` returns `Self` (gradient w.r.t target has same shape as target).
+    // So `loss.grad(&param)` returns tensor of same shape/type as `param`.
+    // If `param` is dynamic, `grad` returns dynamic. This is fine.
+
     let params = layer.parameters();
-    let w = &params[0];
-    let b = &params[1];
+    let w_dyn = &params[0];
+    let b_dyn = &params[1];
 
-    let grad_w = loss.grad(w);
-    let grad_b = loss.grad(b);
+    let grad_w = loss.grad(w_dyn);
+    let grad_b = loss.grad(b_dyn);
 
-    let grad_w_out = Tensor::<NdArray>::new_parameter(NdArray::zeros(&[in_features, out_features]));
-    let grad_b_out = Tensor::<NdArray>::new_parameter(NdArray::zeros(&[out_features]));
+    // Assign grads to outputs
+    let grad_w_out =
+        Tensor::<NdArray, Rank2<IN_FEATURES, OUT_FEATURES>>::new_parameter(NdArray::zeros(&[
+            IN_FEATURES,
+            OUT_FEATURES,
+        ]));
+    let grad_b_out =
+        Tensor::<NdArray, Rank1<OUT_FEATURES>>::new_parameter(NdArray::zeros(&[OUT_FEATURES]));
 
-    let _a1 = Tensor::assign(&grad_w_out, &grad_w, 0);
-    let _a2 = Tensor::assign(&grad_b_out, &grad_b, 0);
+    // We need to match shapes. grad_w is dynamic from loss.grad.
+    // We need to cast or assign dynamic to static?
+    // Tensor::assign<S> expects same S.
+    // w is dynamic parameters(). grad is dynamic.
+    // grad_w_out is static.
+    // We can use grad_w_out.to_dynamic() as target?
+    // And assign.
+    let _ = Tensor::assign(&grad_w_out.to_dynamic(), &grad_w, 0);
+    let _ = Tensor::assign(&grad_b_out.to_dynamic(), &grad_b, 0);
 
     let mut executor = build::<NdArray>();
-    executor.run(vec![(x, x_data)]);
+    executor.run(vec![(x.id(), x_data)]);
 
     let gw_val = executor.get_node_data(grad_w.id()).unwrap();
     let gb_val = executor.get_node_data(grad_b.id()).unwrap();
-
-    // Just check they are not all zeros (unless initialized exactly to 0 which is unlikely for W)
-    // For XavierUniform, W is not 0.
-    // If x=[1, 2], y = xW + b.
-    // L = y^2. dL/dW = 2y * x. dL/db = 2y.
 
     let gw_vec = NdArray::to_vec(gw_val);
     let gb_vec = NdArray::to_vec(gb_val);

@@ -1,9 +1,6 @@
 use crate::backend::Backend;
 
-use super::{
-    node::{Node, NodeId, NodeType, OpType},
-    tensor::Tensor,
-};
+use super::node::{Node, NodeId, NodeType, OpType};
 
 #[derive(Debug)]
 pub struct Executor<B: Backend> {
@@ -21,11 +18,11 @@ impl<B: Backend> Executor<B> {
 
     /// 計算グラフを実行します。
     ///
-    /// `inputs`には、入力ノード(`Tensor::new_input`で作成)に対応するTensorと、実際のデータ(`B::Tensor`)のペアを与えます。
+    /// `inputs`には、入力ノード(`Tensor::new_input`で作成)のIDと、実際のデータ(`B::Tensor`)のペアを与えます。
     /// 指定された実行順序(`excusion_order`)に従ってノードを順次処理し、各ノードのデータ(`node.data`)を埋めていきます。
-    pub fn run(&mut self, inputs: Vec<(Tensor<B>, B::Tensor)>) {
+    pub fn run(&mut self, inputs: Vec<(NodeId, B::Tensor)>) {
         // 入力データを各入力ノードにセット
-        for (Tensor { id, .. }, data) in inputs {
+        for (id, data) in inputs {
             self.nodes[id].data = Some(data);
         }
 
@@ -59,7 +56,9 @@ impl<B: Backend> Executor<B> {
                         OpType::Div => B::div(input_tensors[0], input_tensors[1]),
                         OpType::Matmul => B::matmul(input_tensors[0], input_tensors[1]),
                         OpType::Transpose => B::transpose(input_tensors[0]),
+
                         OpType::Reshape { shape } => B::reshape(input_tensors[0], &shape),
+                        OpType::Broadcast { shape } => B::broadcast(input_tensors[0], &shape),
                         OpType::Sum { axis, keep_dims } => {
                             B::sum(input_tensors[0], axis, keep_dims)
                         }

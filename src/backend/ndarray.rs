@@ -128,6 +128,19 @@ impl Backend for NdArray {
         tensor.clone().into_shape(shape).unwrap()
     }
 
+    fn broadcast(tensor: &Self::Tensor, shape: &[usize]) -> Self::Tensor {
+        tensor
+            .broadcast(shape)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Broadcast failed: shape={:?}, target={:?}",
+                    tensor.shape(),
+                    shape
+                )
+            })
+            .to_owned()
+    }
+
     fn sum(a: &Self::Tensor, axis: Option<usize>, keep_dims: bool) -> Self::Tensor {
         match axis {
             Some(ax) => {

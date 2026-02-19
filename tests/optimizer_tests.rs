@@ -1,8 +1,11 @@
-use fulaminas::backend::ndarray::NdArray;
 use fulaminas::backend::Backend;
+use fulaminas::backend::ndarray::NdArray;
 use fulaminas::engine::build;
 use fulaminas::engine::optimizer::{Adam, Optimizer, SGD};
+use fulaminas::engine::shape::Dynamic;
 use fulaminas::engine::tensor::Tensor;
+
+type DTensor = Tensor<NdArray, Dynamic>;
 
 #[test]
 fn test_sgd_convergence() {
@@ -15,7 +18,7 @@ fn test_sgd_convergence() {
     let x_data = NdArray::from_vec(vec![2.0], &[1]);
 
     // Create Parameter x
-    let x = Tensor::<NdArray>::new_parameter(x_data.clone());
+    let x = DTensor::new_parameter(x_data.clone());
 
     // Loss
     let loss = x.clone() * x.clone();
@@ -42,7 +45,7 @@ fn test_sgd_convergence() {
 #[test]
 fn test_adam_convergence() {
     let x_data = NdArray::from_vec(vec![2.0], &[1]);
-    let x = Tensor::<NdArray>::new_parameter(x_data.clone());
+    let x = DTensor::new_parameter(x_data.clone());
 
     let loss = x.clone() * x.clone();
 

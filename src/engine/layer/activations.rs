@@ -2,7 +2,10 @@
 
 use crate::backend::Backend;
 use crate::engine::layer::Layer;
+use crate::engine::shape::Dynamic;
 use crate::engine::tensor::Tensor;
+
+type DTensor<B> = Tensor<B, Dynamic>;
 
 pub struct ReLU<B: Backend> {
     _marker: std::marker::PhantomData<B>,
@@ -17,11 +20,11 @@ impl<B: Backend> ReLU<B> {
 }
 
 impl<B: Backend> Layer<B> for ReLU<B> {
-    fn forward(&self, x: Tensor<B>) -> Tensor<B> {
+    fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.relu()
     }
 
-    fn parameters(&self) -> Vec<Tensor<B>> {
+    fn parameters(&self) -> Vec<DTensor<B>> {
         vec![]
     }
 }
@@ -39,11 +42,11 @@ impl<B: Backend> Sigmoid<B> {
 }
 
 impl<B: Backend> Layer<B> for Sigmoid<B> {
-    fn forward(&self, x: Tensor<B>) -> Tensor<B> {
+    fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.sigmoid()
     }
 
-    fn parameters(&self) -> Vec<Tensor<B>> {
+    fn parameters(&self) -> Vec<DTensor<B>> {
         vec![]
     }
 }
@@ -61,11 +64,11 @@ impl<B: Backend> Tanh<B> {
 }
 
 impl<B: Backend> Layer<B> for Tanh<B> {
-    fn forward(&self, x: Tensor<B>) -> Tensor<B> {
+    fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.tanh()
     }
 
-    fn parameters(&self) -> Vec<Tensor<B>> {
+    fn parameters(&self) -> Vec<DTensor<B>> {
         vec![]
     }
 }
@@ -83,11 +86,11 @@ impl<B: Backend> Softmax<B> {
 }
 
 impl<B: Backend> Layer<B> for Softmax<B> {
-    fn forward(&self, x: Tensor<B>) -> Tensor<B> {
+    fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.softmax(Some(0))
     }
 
-    fn parameters(&self) -> Vec<Tensor<B>> {
+    fn parameters(&self) -> Vec<DTensor<B>> {
         vec![]
     }
 }
@@ -105,11 +108,11 @@ impl<B: Backend> Swish<B> {
 }
 
 impl<B: Backend> Layer<B> for Swish<B> {
-    fn forward(&self, x: Tensor<B>) -> Tensor<B> {
+    fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.swish()
     }
 
-    fn parameters(&self) -> Vec<Tensor<B>> {
+    fn parameters(&self) -> Vec<DTensor<B>> {
         vec![]
     }
 }

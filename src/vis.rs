@@ -1,4 +1,5 @@
 use crate::backend::Backend;
+use crate::engine::shape::Shape;
 use crate::engine::{tensor::Tensor, with_graph};
 use image::{ImageBuffer, Luma, Rgb};
 
@@ -8,8 +9,8 @@ use image::{ImageBuffer, Luma, Rgb};
 /// Supports 3D tensors (C, H, W) -> Grayscale (if C=1) or RGB (if C=3).
 /// Supports 4D tensors (1, C, H, W) -> Treated as (C, H, W).
 /// Values are normalized to [0, 255].
-pub fn save_image<B: Backend + 'static>(
-    tensor: &Tensor<B>,
+pub fn save_image<B: Backend + 'static, S: Shape + Default>(
+    tensor: &Tensor<B, S>,
     path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (data, shape) = with_graph::<B, _, _>(|graph| {
