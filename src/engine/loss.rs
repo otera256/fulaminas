@@ -46,9 +46,14 @@ impl CrossEntropyLoss {
         });
 
         let probs = logits.clone().softmax(Some(axis));
-        // Add small epsilon to prevent log(0) if needed, but for now assuming stable or distinct logits
-        let log_probs = probs.log();
-        let nll: Tensor<B, S> = target * log_probs; // Element-wise: y * log(y_hat). Returns S.
+        // Add small epsilon to prevent log(0) explicitly as Dynamic
+        let d_probs = probs.to_dynamic();
+        let eps =
+            Tensor::<B, crate::engine::shape::Dynamic>::new_const(B::from_vec(vec![1e-7], &[]));
+        let d_safe_probs = d_probs + eps;
+        let d_log_probs = d_safe_probs.log();
+        let d_nll = target.to_dynamic() * d_log_probs; // Element-wise: y * log(y_hat).
+        let nll = Tensor::<B, S>::from_id(d_nll.id()); // Cast back to S
 
         nll.neg()
     }

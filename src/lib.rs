@@ -66,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Shape mismatch")]
+    #[should_panic(expected = "Broadcast failed")]
     fn test_shape_mismatch() {
         let a = DTensor::new_input_dynamic(vec![2, 3]);
         let b = DTensor::new_input_dynamic(vec![2, 4]);

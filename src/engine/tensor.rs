@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     engine::{
-        node::{Node, NodeId, NodeType, OpType},
+        node::{Node, NodeId, OpType},
         with_graph,
     },
 };
@@ -56,9 +56,10 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
-                node_type: NodeType::Input,
+                role: crate::engine::node::Role::Input,
+                op: OpType::NoOp,
                 inputs: Vec::new(),
-                data: None, // 入力ノードは構築時には値がない
+                control_deps: Vec::new(),
                 shape: Some(shape),
             });
             new_node_id
@@ -71,9 +72,10 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
-                node_type: NodeType::Input,
+                role: crate::engine::node::Role::Input,
+                op: OpType::NoOp,
                 inputs: Vec::new(),
-                data: None,
+                control_deps: Vec::new(),
                 shape: Some(shape),
             });
             new_node_id
@@ -109,11 +111,14 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
-                node_type: NodeType::Parameter,
+                role: crate::engine::node::Role::LearnableParameter,
+                op: OpType::NoOp,
                 inputs: Vec::new(),
-                data: Some(data),
+                control_deps: Vec::new(),
                 shape: Some(shape),
             });
+            // Store initial/current value in initializers
+            graph.initializers.insert(new_node_id, data);
             new_node_id
         });
         Self::from_id(node_id)
@@ -138,11 +143,13 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
-                node_type: NodeType::Const,
+                role: crate::engine::node::Role::Const,
+                op: OpType::NoOp,
                 inputs: Vec::new(),
-                data: Some(data),
+                control_deps: Vec::new(),
                 shape: Some(shape),
             });
+            graph.initializers.insert(new_node_id, data);
             new_node_id
         });
         Self::from_id(node_id)
@@ -202,9 +209,11 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
-                node_type: NodeType::Operation(op_type),
+                role: crate::engine::node::Role::None, // Op nodes have no special Role for now (unless FeedBack)
+                op: op_type,
                 inputs: input_ids,
-                data: None,
+                control_deps: Vec::new(),
+                // data: None,
                 shape: Some(output_shape),
             });
             new_node_id
@@ -235,28 +244,87 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
             let new_node_id = graph.nodes.len();
             graph.nodes.push(Node {
                 id: new_node_id,
-                node_type: NodeType::Assign {
-                    target: target.id,
-                    depth,
-                },
-                inputs: vec![value.id],
-                data: None,                        // 代入ノードは構築時には値がない
-                shape: Some(target_shape.clone()), // Assignノード自体のShapeはTargetと同じとする
+                role: crate::engine::node::Role::None,
+                op: OpType::Assign { depth },
+                inputs: vec![value.id, target.id],
+                control_deps: vec![],
+                shape: Some(target_shape.clone()),
             });
             new_node_id
         });
         Tensor::<B, S>::from_id(node_id)
     }
+
+    /// Binary operation with explicit broadcasting.
+    fn binary_op(lhs: &Tensor<B, S>, rhs: &Tensor<B, S>, op_type: OpType) -> Tensor<B, S> {
+        // Collect node info
+        let (lhs_shape, rhs_shape) = with_graph::<B, _, _>(|graph| {
+            (
+                graph.nodes[lhs.id].shape.clone().expect("LHS no shape"),
+                graph.nodes[rhs.id].shape.clone().expect("RHS no shape"),
+            )
+        });
+
+        if lhs_shape == rhs_shape {
+            // No broadcast needed
+            return Tensor::<B, S>::op_ids::<S>(op_type, vec![lhs.id, rhs.id]);
+        }
+
+        let target_shape = crate::engine::shape::compute_broadcast_shape(&lhs_shape, &rhs_shape)
+            .expect("Broadcast failed");
+
+        let mut lhs_id = lhs.id;
+        let mut rhs_id = rhs.id;
+
+        with_graph::<B, _, _>(|graph| {
+            // Broadcast LHS if needed
+            if lhs_shape != target_shape {
+                let new_node_id = graph.nodes.len();
+                graph.nodes.push(Node {
+                    id: new_node_id,
+                    role: crate::engine::node::Role::None,
+                    op: OpType::Broadcast {
+                        shape: target_shape.clone(),
+                    },
+                    inputs: vec![lhs_id],
+                    control_deps: vec![],
+                    shape: Some(target_shape.clone()),
+                });
+                lhs_id = new_node_id;
+            }
+
+            // Broadcast RHS if needed
+            if rhs_shape != target_shape {
+                let new_node_id = graph.nodes.len();
+                graph.nodes.push(Node {
+                    id: new_node_id,
+                    role: crate::engine::node::Role::None,
+                    op: OpType::Broadcast {
+                        shape: target_shape.clone(),
+                    },
+                    inputs: vec![rhs_id],
+                    control_deps: vec![],
+                    shape: Some(target_shape.clone()),
+                });
+                rhs_id = new_node_id;
+            }
+        });
+
+        // Now create the binary op node outside with_graph
+        let output_tensor = Tensor::<B, S>::op_ids::<S>(op_type, vec![lhs_id, rhs_id]);
+
+        // Explicitly set the target shape for the output tensor just in case (though op_ids infer shape via runtime compute_shape)
+        // Ensure output shape is correct
+        output_tensor
+    }
 }
 
-// 演算のオーバーロード
 // 演算のオーバーロード
 impl<B: Backend + 'static, S: Shape + Default> std::ops::Add for Tensor<B, S> {
     type Output = Tensor<B, S>;
 
     fn add(self, rhs: Self) -> Self::Output {
-        // 同じShapeのみ許可
-        Tensor::op(OpType::Add, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Add)
     }
 }
 
@@ -264,7 +332,7 @@ impl<B: Backend + 'static, S: Shape + Default> std::ops::Sub for Tensor<B, S> {
     type Output = Tensor<B, S>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Tensor::op(OpType::Sub, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Sub)
     }
 }
 
@@ -272,7 +340,7 @@ impl<B: Backend + 'static, S: Shape + Default> std::ops::Mul for Tensor<B, S> {
     type Output = Tensor<B, S>;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        Tensor::op(OpType::Mul, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Mul)
     }
 }
 
@@ -280,20 +348,20 @@ impl<B: Backend + 'static, S: Shape + Default> std::ops::Div for Tensor<B, S> {
     type Output = Tensor<B, S>;
 
     fn div(self, rhs: Self) -> Self::Output {
-        Tensor::op(OpType::Div, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Div)
     }
 }
 
 impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
     // メソッドとしても和差積を定義しておくと、演算子オーバーロードと両方使えるので便利
     pub fn add(self, rhs: Self) -> Self {
-        Tensor::op(OpType::Add, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Add)
     }
     pub fn sub(self, rhs: Self) -> Self {
-        Tensor::op(OpType::Sub, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Sub)
     }
     pub fn mul(self, rhs: Self) -> Self {
-        Tensor::op(OpType::Mul, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Mul)
     }
     /// 行列積 (Matrix Multiplication) を行います。
     pub fn matmul(self, rhs: Self) -> Self {
@@ -367,14 +435,16 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
             // y (self)はスカラーであると仮定する
 
             let new_node_id = graph.nodes.len();
+            // Grad Node creation
             graph.nodes.push(Node {
                 id: new_node_id,
-                node_type: NodeType::Grad {
+                role: crate::engine::node::Role::None,
+                op: OpType::Grad {
                     x: x.id,
                     y: self.id,
                 },
                 inputs: vec![], // Grad node explicitly depends on nothing in forward pass
-                data: None,
+                control_deps: vec![],
                 shape: Some(x_shape.clone()),
             });
             new_node_id
@@ -438,7 +508,7 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
     }
 
     pub fn gt(self, rhs: Self) -> Self {
-        Tensor::op(OpType::Gt, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Gt)
     }
 
     pub fn sqrt(self) -> Self {
@@ -446,7 +516,7 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
     }
 
     pub fn eq(self, rhs: Self) -> Self {
-        Tensor::op(OpType::Eq, vec![&self, &rhs])
+        Tensor::binary_op(&self, &rhs, OpType::Eq)
     }
 }
 

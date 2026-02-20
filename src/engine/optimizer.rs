@@ -1,6 +1,6 @@
 use crate::backend::Backend;
 use crate::engine::{
-    node::{NodeId, NodeType},
+    node::NodeId,
     shape::{Dynamic, Shape},
     tensor::Tensor,
     with_graph,
@@ -30,7 +30,7 @@ impl<B: Backend + 'static> Optimizer<B> for SGD {
             graph
                 .nodes
                 .iter()
-                .filter(|n| matches!(n.node_type, NodeType::Parameter))
+                .filter(|n| matches!(n.role, crate::engine::node::Role::LearnableParameter))
                 .map(|n| Tensor::from_id(n.id))
                 .collect()
         });
@@ -41,7 +41,7 @@ impl<B: Backend + 'static> Optimizer<B> for SGD {
 
             // To support scalar mult correctly, we use broadcast mult.
             // lr is scalar const.
-            let lr_tensor = DTensor::new_const(B::from_vec(vec![self.lr], &[1]));
+            let lr_tensor = DTensor::new_const(B::from_vec(vec![self.lr], &[]));
             let delta = grad * lr_tensor;
             let new_param = param.clone() - delta;
 
@@ -70,7 +70,7 @@ impl<B: Backend + 'static> Adam<B> {
             beta2: 0.999,
             epsilon: 1e-8,
             state: HashMap::new(),
-            t: DTensor::new_parameter(B::from_vec(vec![0.0], &[1])),
+            t: DTensor::new_parameter(B::from_vec(vec![0.0], &[])),
         }
     }
 }
@@ -81,23 +81,23 @@ impl<B: Backend + 'static> Optimizer<B> for Adam<B> {
             graph
                 .nodes
                 .iter()
-                .filter(|n| matches!(n.node_type, NodeType::Parameter))
+                .filter(|n| matches!(n.role, crate::engine::node::Role::LearnableParameter))
                 .map(|n| Tensor::from_id(n.id))
                 .collect()
         });
 
         // Update timestep
         // t = t + 1
-        let one = DTensor::new_const(B::from_vec(vec![1.0], &[1]));
+        let one = DTensor::new_const(B::from_vec(vec![1.0], &[]));
         let new_t = self.t.clone() + one.clone();
         let _ = DTensor::assign(&self.t, &new_t, 0);
 
         // We use the new t for calculation (t=1, 2, ...)
 
-        let beta1 = DTensor::new_const(B::from_vec(vec![self.beta1], &[1]));
-        let beta2 = DTensor::new_const(B::from_vec(vec![self.beta2], &[1]));
-        let epsilon = DTensor::new_const(B::from_vec(vec![self.epsilon], &[1]));
-        let lr = DTensor::new_const(B::from_vec(vec![self.lr], &[1]));
+        let beta1 = DTensor::new_const(B::from_vec(vec![self.beta1], &[]));
+        let beta2 = DTensor::new_const(B::from_vec(vec![self.beta2], &[]));
+        let epsilon = DTensor::new_const(B::from_vec(vec![self.epsilon], &[]));
+        let lr = DTensor::new_const(B::from_vec(vec![self.lr], &[]));
         let one_minus_beta1 = one.clone() - beta1.clone();
         let one_minus_beta2 = one.clone() - beta2.clone();
 
@@ -136,19 +136,21 @@ impl<B: Backend + 'static> Optimizer<B> for Adam<B> {
             // Update m
             // m = beta1 * m + (1 - beta1) * grad
             let new_m = beta1.clone() * m.clone() + one_minus_beta1.clone() * grad.clone();
-            let _ = DTensor::assign(&m, &new_m, 0);
+            // Chain: m_update depends on new_m, and is the result of assignment
+            let m_update = DTensor::assign(&m, &new_m, 0);
 
             // Update v
             // v = beta2 * v + (1 - beta2) * grad^2
             let grad_sq = grad.clone() * grad;
             let new_v = beta2.clone() * v.clone() + one_minus_beta2.clone() * grad_sq;
-            let _ = DTensor::assign(&v, &new_v, 0);
+            let v_update = DTensor::assign(&v, &new_v, 0);
 
             // Update p
             // p -= lr * m / (sqrt(v) + eps)
+            // Use updated m/v values (outputs of Assign nodes) to enforce order
 
-            let denom = new_v.sqrt() + epsilon.clone();
-            let step = new_m / denom;
+            let denom = v_update.sqrt() + epsilon.clone();
+            let step = m_update / denom;
             let new_p = param.clone() - lr.clone() * step;
             let _ = DTensor::assign(&param, &new_p, 0);
         }

@@ -22,7 +22,15 @@ fn main() {
         // So this is correct.
         let image_data = <NdArray as Backend>::from_vec(vec, &[1, 28, 28]);
         let image_tensor = DTensor::new_const(image_data);
-        fulaminas::vis::save_image(&image_tensor, &format!("image_{}_label_{}.png", i, label))
-            .unwrap();
+
+        // We need an executor to access the data (now stored in memory/initializers)
+        let executor = fulaminas::engine::build::<NdArray>();
+
+        fulaminas::vis::save_image(
+            &executor,
+            &image_tensor,
+            &format!("image_{}_label_{}.png", i, label),
+        )
+        .unwrap();
     }
 }

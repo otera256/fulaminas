@@ -19,11 +19,8 @@ use fulaminas::engine::tensor::Tensor;
 // Define constraints for network
 const BATCH_SIZE: usize = 256;
 const IN_FEATURES: usize = 784;
-const HIDDEN_1: usize = 512;
-const HIDDEN_2: usize = 256;
-const HIDDEN_3: usize = 128;
-const HIDDEN_4: usize = 64;
-const HIDDEN_5: usize = 32;
+const HIDDEN_1: usize = 256;
+const HIDDEN_2: usize = 128;
 const CLASSES: usize = 10;
 
 fn main() {
@@ -58,19 +55,13 @@ fn main() {
     // Linear::<Backend, Input, Output>
     let layer1 = Linear::<NdArray, IN_FEATURES, HIDDEN_1>::new(InitStrategy::HeNormal);
     let layer2 = Linear::<NdArray, HIDDEN_1, HIDDEN_2>::new(InitStrategy::HeNormal);
-    let layer3 = Linear::<NdArray, HIDDEN_2, HIDDEN_3>::new(InitStrategy::HeNormal);
-    let layer4 = Linear::<NdArray, HIDDEN_3, HIDDEN_4>::new(InitStrategy::HeNormal);
-    let layer5 = Linear::<NdArray, HIDDEN_4, HIDDEN_5>::new(InitStrategy::HeNormal);
-    let layer6 = Linear::<NdArray, HIDDEN_5, CLASSES>::new(InitStrategy::HeNormal);
+    let layer3 = Linear::<NdArray, HIDDEN_2, CLASSES>::new(InitStrategy::HeNormal);
 
     // Forward pass
     // Note: linear.forward(x) expects Tensor<B, Rank2<Batch, In>>
     let h1 = layer1.forward(x_flat).relu();
     let h2 = layer2.forward(h1).relu();
-    let h3 = layer3.forward(h2).relu();
-    let h4 = layer4.forward(h3).relu();
-    let h5 = layer5.forward(h4).relu();
-    let y = layer6.forward(h5);
+    let y = layer3.forward(h2);
 
     println!("Graph built with Static Shapes.");
 
@@ -118,7 +109,7 @@ fn main() {
     file.write_all(dot.as_bytes()).unwrap();
     println!("Graph written to graph.dot");
 
-    for epoch in 0..10 {
+    for epoch in 0..20 {
         for (i, (input_val_4d, target_val, _mask_val)) in mnist_loader
             .iter()
             .map(|b| fulaminas::data::collate::mnist_collate_padded::<NdArray>(b, BATCH_SIZE))
@@ -128,7 +119,7 @@ fn main() {
             // We need to provide data for inputs
             // Tensor::new_input() creates an Input node.
 
-            executor.run(vec![(x.id(), input_val_4d), (target.id(), target_val)]);
+            executor.step_train(vec![(x.id(), input_val_4d), (target.id(), target_val)]);
 
             if i % 100 == 0 {
                 let loss_val = executor.get_node_data(loss_container.id()).unwrap();
@@ -143,7 +134,7 @@ fn main() {
             .iter()
             .map(|b| fulaminas::data::collate::mnist_collate_padded::<NdArray>(b, BATCH_SIZE))
         {
-            executor.run(vec![(x.id(), input_val_4d), (target.id(), target_val)]);
+            executor.step_inference(vec![(x.id(), input_val_4d), (target.id(), target_val)]);
             let accu_val = executor.get_node_data(acc_container.id()).unwrap();
             let accu_scalar = NdArray::to_vec(accu_val)[0];
             correct_count += accu_scalar * BATCH_SIZE as f32;

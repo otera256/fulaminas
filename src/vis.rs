@@ -3,6 +3,8 @@ use crate::engine::shape::Shape;
 use crate::engine::{tensor::Tensor, with_graph};
 use image::{ImageBuffer, Luma, Rgb};
 
+use crate::engine::executor::Executor; // Add Executor import
+
 /// Saves a tensor as an image.
 ///
 /// Supports 2D tensors (H, W) -> Grayscale.
@@ -10,13 +12,18 @@ use image::{ImageBuffer, Luma, Rgb};
 /// Supports 4D tensors (1, C, H, W) -> Treated as (C, H, W).
 /// Values are normalized to [0, 255].
 pub fn save_image<B: Backend + 'static, S: Shape + Default>(
+    executor: &Executor<B>,
     tensor: &Tensor<B, S>,
     path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (data, shape) = with_graph::<B, _, _>(|graph| {
         let node = &graph.nodes[tensor.id()];
-        let data = node.data.as_ref().expect("Tensor has no data").clone();
         let shape = node.shape.as_ref().expect("Tensor has no shape").clone();
+
+        let data = executor
+            .get_node_data(tensor.id())
+            .expect("Tensor has no data in executor memory")
+            .clone();
         (data, shape)
     });
 

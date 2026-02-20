@@ -1,114 +1,198 @@
 use crate::backend::Backend;
 
-use super::node::{Node, NodeId, NodeType, OpType};
+use std::collections::HashMap;
+
+use super::node::{Node, NodeId, OpType};
 
 #[derive(Debug)]
 pub struct Executor<B: Backend> {
-    nodes: Vec<Node<B>>,
-    excusion_order: Vec<NodeId>,
+    nodes: Vec<Node>,
+    training_plan: Vec<NodeId>,
+    inference_plan: Vec<NodeId>,
+    memory: HashMap<NodeId, B::Tensor>,
 }
 
 impl<B: Backend> Executor<B> {
-    pub fn new(nodes: Vec<Node<B>>, excusion_order: Vec<NodeId>) -> Self {
+    pub fn new(
+        nodes: Vec<Node>,
+        initializers: HashMap<NodeId, B::Tensor>,
+        training_plan: Vec<NodeId>,
+        inference_plan: Vec<NodeId>,
+    ) -> Self {
         Self {
             nodes,
-            excusion_order,
+            training_plan,
+            inference_plan,
+            memory: initializers,
         }
     }
 
     /// 計算グラフを実行します。
     ///
     /// `inputs`には、入力ノード(`Tensor::new_input`で作成)のIDと、実際のデータ(`B::Tensor`)のペアを与えます。
-    /// 指定された実行順序(`excusion_order`)に従ってノードを順次処理し、各ノードのデータ(`node.data`)を埋めていきます。
+    /// 指定された実行順序(`excusion_order`)に従ってノードを順次処理し、各ノードのデータ(`exec.memory`)を埋めていきます。
+    /// Execute the training plan (forward + backward + optimizer updates).
+    pub fn step_train(&mut self, inputs: Vec<(NodeId, B::Tensor)>) {
+        self.execute_plan(&self.training_plan.clone(), inputs);
+    }
+
+    /// Execute the inference plan (forward only).
+    pub fn step_inference(&mut self, inputs: Vec<(NodeId, B::Tensor)>) {
+        self.execute_plan(&self.inference_plan.clone(), inputs);
+    }
+
+    /// Legacy run method for compatibility. Executes training plan.
+    /// @deprecated Use step_train or step_inference.
     pub fn run(&mut self, inputs: Vec<(NodeId, B::Tensor)>) {
+        // Default to training for now to keep mnist_mlp working until updated
+        self.step_train(inputs);
+    }
+
+    fn execute_plan(&mut self, plan: &[NodeId], inputs: Vec<(NodeId, B::Tensor)>) {
         // 入力データを各入力ノードにセット
         for (id, data) in inputs {
-            self.nodes[id].data = Some(data);
+            self.memory.insert(id, data);
         }
 
         // println!("Execution Order len: {}", self.excusion_order.len());
         // println!("Loss node data before run: {:?}", self.nodes.iter().find(|n| match n.node_type { NodeType::Operation(op) => matches!(op, OpType::Div), _ => false }).and_then(|n| n.data.as_ref()));
 
         // トポロジカルソート順に実行
-        for &node_id in &self.excusion_order {
-            // println!(
-            //     "Executing node: {} {:?}",
-            //     node_id, self.nodes[node_id].node_type
-            // );
-            let node_type_info = self.nodes[node_id].node_type.clone();
+        for &node_id in plan {
+            let node = &self.nodes[node_id];
+
+            // 入力データ収集
+            let mut input_data = Vec::new();
+            for &input_id in &node.inputs {
+                if let Some(data) = self.memory.get(&input_id) {
+                    input_data.push(data);
+                } else {
+                    // Control dependency or missing data?
+                    // For Assign check later.
+                }
+            }
+
+            // Assign: input[0] is value, input[1] is target (optional/logical).
+            // But Assign operation just needs the value to put into memory at TARGET.
+            // Wait, Assign { depth } op doesn't carry target info?
+            // "Tensor::assign... inputs: vec![value.id, target.id]"
+            // So logic needs to be correct.
+
             let mut output_data = None;
             let mut assign_target = None;
 
-            match node_type_info {
-                NodeType::Operation(op_type) => {
-                    // 入力テンソルのデータを収集
-                    let input_tensors: Vec<&B::Tensor> = self.nodes[node_id]
-                        .inputs
-                        .iter()
-                        .map(|&input| self.nodes[input].data.as_ref().unwrap())
-                        .collect();
-
-                    // バックエンドを使って演算を実行
-                    let output = match op_type {
-                        OpType::Add => B::add(input_tensors[0], input_tensors[1]),
-                        OpType::Sub => B::sub(input_tensors[0], input_tensors[1]),
-                        OpType::Mul => B::mul(input_tensors[0], input_tensors[1]),
-                        OpType::Div => B::div(input_tensors[0], input_tensors[1]),
-                        OpType::Matmul => B::matmul(input_tensors[0], input_tensors[1]),
-                        OpType::Transpose => B::transpose(input_tensors[0]),
-
-                        OpType::Reshape { shape } => B::reshape(input_tensors[0], &shape),
-                        OpType::Broadcast { shape } => B::broadcast(input_tensors[0], &shape),
-                        OpType::Sum { axis, keep_dims } => {
-                            B::sum(input_tensors[0], axis, keep_dims)
-                        }
-                        OpType::Identity => input_tensors[0].clone(),
-                        OpType::AddN => {
-                            let mut sum = input_tensors[0].clone();
-                            for tensor in input_tensors.iter().skip(1) {
-                                sum = B::add(&sum, tensor);
-                            }
-                            sum
-                        }
-                        OpType::Neg => B::neg(input_tensors[0]),
-                        OpType::OnesLike => B::ones_like(input_tensors[0]),
-                        OpType::Sigmoid => B::sigmoid(input_tensors[0]),
-                        OpType::Tanh => B::tanh(input_tensors[0]),
-                        OpType::ReLU => B::relu(input_tensors[0]),
-                        OpType::Softmax { axis } => B::softmax(input_tensors[0], axis),
-                        OpType::Exp => B::exp(input_tensors[0]),
-                        OpType::Log => B::log(input_tensors[0]),
-                        OpType::Powi { n } => B::powi(input_tensors[0], n),
-                        OpType::Gt => B::gt(input_tensors[0], input_tensors[1]),
-                        OpType::Sqrt => B::sqrt(input_tensors[0]),
-                        OpType::ArgMax { axis } => B::argmax(input_tensors[0], axis),
-                        OpType::Eq => B::eq(input_tensors[0], input_tensors[1]),
-                    };
-                    output_data = Some(output);
+            match &node.op {
+                OpType::Add => {
+                    output_data = Some(B::add(input_data[0], input_data[1]));
                 }
-                NodeType::Assign { target, .. } => {
-                    // Assignノードは、input[0]の値をtargetにコピーする
-                    let input_id = self.nodes[node_id].inputs[0];
-                    let input_val = self.nodes[input_id].data.as_ref().unwrap().clone();
-                    assign_target = Some((target, input_val));
+                OpType::Sub => {
+                    output_data = Some(B::sub(input_data[0], input_data[1]));
                 }
-                _ => {}
+                OpType::Mul => {
+                    output_data = Some(B::mul(input_data[0], input_data[1]));
+                }
+                OpType::Div => {
+                    output_data = Some(B::div(input_data[0], input_data[1]));
+                }
+                OpType::Matmul => {
+                    output_data = Some(B::matmul(input_data[0], input_data[1]));
+                }
+                OpType::Transpose => {
+                    output_data = Some(B::transpose(input_data[0]));
+                }
+                OpType::Reshape { shape } => {
+                    output_data = Some(B::reshape(input_data[0], shape));
+                }
+                OpType::Broadcast { shape } => {
+                    output_data = Some(B::broadcast(input_data[0], shape));
+                }
+                OpType::Sum { axis, keep_dims } => {
+                    output_data = Some(B::sum(input_data[0], *axis, *keep_dims));
+                }
+                OpType::Identity => {
+                    output_data = Some(input_data[0].clone());
+                }
+                OpType::AddN => {
+                    let mut sum = input_data[0].clone();
+                    for next in &input_data[1..] {
+                        sum = B::add(&sum, next);
+                    }
+                    output_data = Some(sum);
+                }
+                OpType::Neg => {
+                    output_data = Some(B::neg(input_data[0]));
+                }
+                OpType::OnesLike => {
+                    output_data = Some(B::ones_like(input_data[0]));
+                }
+                OpType::Sigmoid => {
+                    output_data = Some(B::sigmoid(input_data[0]));
+                }
+                OpType::Tanh => {
+                    output_data = Some(B::tanh(input_data[0]));
+                }
+                OpType::ReLU => {
+                    output_data = Some(B::relu(input_data[0]));
+                }
+                OpType::Softmax { axis } => {
+                    output_data = Some(B::softmax(input_data[0], *axis));
+                }
+                OpType::Exp => {
+                    output_data = Some(B::exp(input_data[0]));
+                }
+                OpType::Log => {
+                    output_data = Some(B::log(input_data[0]));
+                }
+                OpType::Powi { n } => {
+                    output_data = Some(B::powi(input_data[0], *n));
+                }
+                OpType::Gt => {
+                    output_data = Some(B::gt(input_data[0], input_data[1]));
+                }
+                OpType::Sqrt => {
+                    output_data = Some(B::sqrt(input_data[0]));
+                }
+                OpType::ArgMax { axis } => {
+                    output_data = Some(B::argmax(input_data[0], *axis));
+                }
+                OpType::Eq => {
+                    output_data = Some(B::eq(input_data[0], input_data[1]));
+                }
+                OpType::Assign { depth: _ } => {
+                    // Assign Op: inputs[0] is value, inputs[1] is target tensor.
+                    // We want to update the memory at target_id with value.
+                    // Also Assign node acts as Identity for the value, so it returns value.
+                    let val = input_data[0].clone();
+
+                    // inputs[1] is target tensor. NodeId of target.
+                    let target_id = node.inputs[1];
+
+                    assign_target = Some((target_id, val.clone()));
+                    output_data = Some(val); // Assign returns the new value
+                }
+                OpType::NoOp => {
+                    // Do nothing. Memory might be already populated (Input/Const/Param)
+                }
+                OpType::Grad { .. } => {
+                    // Do nothing or error? Should not be in execution order usually?
+                    // Unless it's a placeholder that wasn't expanded?
+                }
             }
 
-            // 計算結果をノードに保存
+            // 計算結果をメモリに保存
             if let Some(data) = output_data {
-                self.nodes[node_id].data = Some(data);
+                self.memory.insert(node_id, data);
             }
             // Assignの処理（ターゲットノードのデータを更新）
             if let Some((target, val)) = assign_target {
-                self.nodes[target].data = Some(val);
+                self.memory.insert(target, val);
             }
         }
     }
 
     /// 指定されたノードの計算結果を取得します。
     pub fn get_node_data(&self, node_id: NodeId) -> Option<&B::Tensor> {
-        self.nodes[node_id].data.as_ref()
+        self.memory.get(&node_id)
     }
 
     /// 計算グラフをDOT言語形式（Graphviz用）の文字列に変換します。
@@ -118,58 +202,59 @@ impl<B: Backend> Executor<B> {
         dot.push_str("    node [style=filled];\n");
 
         for node in &self.nodes {
-            let (label, shape, color) = match &node.node_type {
-                NodeType::Input => (format!("Input\\n{:?}", node.shape), "box", "lightgray"),
-                NodeType::Parameter => (
-                    format!("Parameter\\n{:?}", node.shape),
-                    "octagon",
-                    "lightyellow",
-                ),
-                NodeType::Const => (
-                    format!("Const\\n{:?}", node.shape),
-                    "doublecircle",
-                    "lightgray",
-                ),
-                NodeType::Operation(op) => {
-                    let color = match op {
-                        OpType::Add
-                        | OpType::Sub
-                        | OpType::Mul
-                        | OpType::Div
-                        | OpType::Neg
-                        | OpType::Powi { .. }
-                        | OpType::Sqrt => "lightblue",
-                        OpType::Matmul
-                        | OpType::Transpose
-                        | OpType::Reshape { .. }
-                        | OpType::Broadcast { .. }
-                        | OpType::Identity
-                        | OpType::OnesLike => "lightyellow",
-                        OpType::Sigmoid
-                        | OpType::Tanh
-                        | OpType::ReLU
-                        | OpType::Softmax { .. }
-                        | OpType::Exp
-                        | OpType::Log => "lightgreen",
-                        OpType::Sum { .. }
-                        | OpType::AddN
-                        | OpType::Gt
-                        | OpType::ArgMax { .. }
-                        | OpType::Eq => "lightcoral",
-                    };
-                    (format!("{:?}\\n{:?}", op, node.shape), "ellipse", color)
-                }
-                NodeType::Assign { target, depth } => (
-                    format!("Assign\\n(target={}, depth={})", target, depth),
-                    "invhouse",
-                    "orange",
-                ),
-                NodeType::Grad { x, y } => (format!("Grad\\n(x={}, y={})", x, y), "note", "plum"),
+            let (label, shape, color) = match &node.op {
+                OpType::Add
+                | OpType::Sub
+                | OpType::Mul
+                | OpType::Div
+                | OpType::Neg
+                | OpType::Powi { .. }
+                | OpType::Sqrt => (format!("{:?}", node.op), "box", "lightblue"),
+
+                OpType::Matmul
+                | OpType::Transpose
+                | OpType::Reshape { .. }
+                | OpType::Broadcast { .. }
+                | OpType::Identity
+                | OpType::OnesLike => (format!("{:?}", node.op), "box", "lightyellow"),
+
+                OpType::Sigmoid
+                | OpType::Tanh
+                | OpType::ReLU
+                | OpType::Softmax { .. }
+                | OpType::Exp
+                | OpType::Log => (format!("{:?}", node.op), "box", "lightgreen"),
+
+                OpType::Sum { .. }
+                | OpType::AddN
+                | OpType::Gt
+                | OpType::ArgMax { .. }
+                | OpType::Eq => (format!("{:?}", node.op), "box", "lightcoral"),
+
+                OpType::Assign { depth } => (format!("Assign (d={})", depth), "invhouse", "orange"),
+                OpType::Grad { x, y } => (format!("Grad(x={}, y={})", x, y), "note", "plum"),
+
+                OpType::NoOp => match node.role {
+                    crate::engine::node::Role::Input => ("Input".to_string(), "box", "lightgray"),
+                    crate::engine::node::Role::LearnableParameter => {
+                        ("Param".to_string(), "octagon", "lightyellow")
+                    }
+                    crate::engine::node::Role::Const => {
+                        ("Const".to_string(), "doublecircle", "lightgray")
+                    }
+                    _ => ("NoOp".to_string(), "box", "white"),
+                },
+            };
+
+            let label_with_shape = if let Some(s) = &node.shape {
+                format!("{}\\n{:?}", label, s)
+            } else {
+                label
             };
 
             dot.push_str(&format!(
                 "    {} [label=\"#{}: {}\", shape={}, fillcolor={}];\n",
-                node.id, node.id, label, shape, color
+                node.id, node.id, label_with_shape, shape, color
             ));
 
             for &input in &node.inputs {
@@ -177,11 +262,15 @@ impl<B: Backend> Executor<B> {
             }
 
             // Assignノードの場合はターゲットへ点線のエッジを張る
-            if let NodeType::Assign { target, .. } = node.node_type {
-                dot.push_str(&format!(
-                    "    {} -> {} [style=dashed, label=\"assign\"];\n",
-                    node.id, target
-                ));
+            if let OpType::Assign { .. } = node.op {
+                // target is inputs[1]
+                if node.inputs.len() > 1 {
+                    let target = node.inputs[1];
+                    dot.push_str(&format!(
+                        "    {} -> {} [style=dashed, label=\"assign\"];\n",
+                        node.id, target
+                    ));
+                }
             }
         }
 

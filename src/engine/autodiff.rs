@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::backend::Backend;
 use crate::engine::{
-    node::{Node, NodeId, NodeType, OpType},
+    node::{Node, NodeId, OpType},
     shape::Dynamic,
     tensor::Tensor,
     with_graph,
@@ -21,7 +21,7 @@ pub fn expand_graph<B: Backend + 'static>() {
         let mut global_roots = Vec::new();
 
         for (i, node) in graph.nodes.iter().enumerate() {
-            if let NodeType::Grad { x, y } = node.node_type {
+            if let OpType::Grad { x, y } = node.op {
                 grads_to_process.entry(y).or_default().push((x, i));
                 if !global_roots.contains(&y) {
                     global_roots.push(y);
@@ -64,51 +64,49 @@ pub fn expand_graph<B: Backend + 'static>() {
             with_graph::<B, _, _>(|graph| {
                 for &(x, grad_node_id) in &x_targets {
                     if x == node_id {
-                        graph.nodes[grad_node_id].node_type =
-                            NodeType::Operation(crate::engine::node::OpType::Identity);
+                        // Replace Grad placeholder with Identity connected to final_grad
+                        graph.nodes[grad_node_id].op = crate::engine::node::OpType::Identity;
                         graph.nodes[grad_node_id].inputs = vec![final_grad.id];
                     }
                 }
             });
 
             // バックプロパゲーション（入力への勾配伝播）
-            let (node_type, inputs) = with_graph::<B, _, _>(|graph| {
+            // let (node_type, inputs) = with_graph::<B, _, _>(|graph| { // Old
+            let (op_type, inputs) = with_graph::<B, _, _>(|graph| {
                 let node = &graph.nodes[node_id];
-                (node.node_type.clone(), node.inputs.clone())
+                (node.op.clone(), node.inputs.clone())
             });
 
             let input_tensors: Vec<DTensor<B>> =
                 inputs.iter().map(|&id| DTensor::<B>::from_id(id)).collect();
 
-            match node_type {
-                NodeType::Operation(OpType::Add) => {
+            match op_type {
+                OpType::Add => {
                     let a = &input_tensors[0];
                     let b = &input_tensors[1];
-                    let ga = handle_broadcast(&final_grad, a);
-                    let gb = handle_broadcast(&final_grad, b);
+                    // Shapes are guaranteed to be identical due to explicit broadcasting
+                    node_grads.entry(a.id).or_default().push(final_grad.clone());
+                    node_grads.entry(b.id).or_default().push(final_grad.clone());
+                }
+                OpType::Sub => {
+                    let a = &input_tensors[0];
+                    let b = &input_tensors[1];
+                    let ga = final_grad.clone();
+                    let gb = final_grad.neg();
                     node_grads.entry(a.id).or_default().push(ga);
                     node_grads.entry(b.id).or_default().push(gb);
                 }
-                NodeType::Operation(OpType::Sub) => {
-                    let a = &input_tensors[0];
-                    let b = &input_tensors[1];
-                    let ga = handle_broadcast(&final_grad, a);
-                    let gb = handle_broadcast(&final_grad.neg(), b);
-                    node_grads.entry(a.id).or_default().push(ga);
-                    node_grads.entry(b.id).or_default().push(gb);
-                }
-                NodeType::Operation(OpType::Mul) => {
+                OpType::Mul => {
                     let a = &input_tensors[0];
                     let b = &input_tensors[1];
                     let dy_b = final_grad.clone() * b.clone();
                     let dy_a = final_grad.clone() * a.clone();
 
-                    let ga = handle_broadcast(&dy_b, a);
-                    let gb = handle_broadcast(&dy_a, b);
-                    node_grads.entry(a.id).or_default().push(ga);
-                    node_grads.entry(b.id).or_default().push(gb);
+                    node_grads.entry(a.id).or_default().push(dy_b);
+                    node_grads.entry(b.id).or_default().push(dy_a);
                 }
-                NodeType::Operation(OpType::Div) => {
+                OpType::Div => {
                     let a = &input_tensors[0];
                     let b = &input_tensors[1];
 
@@ -119,30 +117,18 @@ pub fn expand_graph<B: Backend + 'static>() {
                     let neg_a_div_b_sq = a.clone().neg() * b_sq.powi(-1);
                     let dy_db = final_grad.clone() * neg_a_div_b_sq;
 
-                    let ga = handle_broadcast(&dy_da, a);
-                    let gb = handle_broadcast(&dy_db, b);
-                    node_grads.entry(a.id).or_default().push(ga);
-                    node_grads.entry(b.id).or_default().push(gb);
+                    node_grads.entry(a.id).or_default().push(dy_da);
+                    node_grads.entry(b.id).or_default().push(dy_db);
                 }
-                NodeType::Operation(OpType::Matmul) => {
+                OpType::Matmul => {
                     let a = &input_tensors[0];
                     let b = &input_tensors[1];
                     // Matmul gradients:
                     // dL/dA = dL/dZ @ B^T
                     // dL/dB = A^T @ dL/dZ
-                    // We need generic matmul or dynamic one.
-                    // Tensor::matmul is implemented for Rank2/Rank3.
-                    // But here we have DTensor.
-                    // We need to use `op` directly or implement matmul for DTensor?
-                    // Tensor::matmul is not on `Tensor<B, S>` generally, only specialized impls.
-                    // But `Tensor::op` is available.
 
                     let b_t = b.clone().transpose();
                     let dy_b_t = final_grad.clone().matmul(b_t);
-                    // Wait, matmul method is not available on Dynamic? Eek.
-                    // I need to add `matmul_dynamic` or make `matmul` generic over Rhs?
-                    // Or just use `Tensor::op(Matmul, ...)` directly.
-                    // Since `matmul` logic in backend/shape handles arbitrary shapes (generic broadcast matmul), it's fine to call OpType::Matmul.
 
                     let a_t = a.clone().transpose();
                     let a_t_dy = DTensor::op(OpType::Matmul, vec![&a_t, &final_grad]);
@@ -150,32 +136,31 @@ pub fn expand_graph<B: Backend + 'static>() {
                     node_grads.entry(a.id).or_default().push(dy_b_t);
                     node_grads.entry(b.id).or_default().push(a_t_dy);
                 }
-                NodeType::Operation(OpType::Neg) => {
+                OpType::Neg => {
                     let a = &input_tensors[0];
                     let ga = final_grad.neg();
                     node_grads.entry(a.id).or_default().push(ga);
                 }
-                NodeType::Operation(OpType::Transpose) => {
+                OpType::Transpose => {
                     let a = &input_tensors[0];
                     let ga = final_grad.transpose();
                     node_grads.entry(a.id).or_default().push(ga);
                 }
-                NodeType::Operation(OpType::Reshape { shape: _ }) => {
+                OpType::Reshape { shape: _ } => {
                     let a = &input_tensors[0];
                     let a_shape =
                         with_graph::<B, _, _>(|graph| graph.nodes[a.id].shape.clone().unwrap());
                     let ga = final_grad.reshape_dynamic(a_shape);
                     node_grads.entry(a.id).or_default().push(ga);
                 }
-                NodeType::Operation(OpType::Broadcast { shape: _ }) => {
+                OpType::Broadcast { shape: _ } => {
                     // z = broadcast(a, shape)
                     // dL/da = sum(dL/dz) over broadcasted dimensions
                     let a = &input_tensors[0];
-                    // handle_broadcast logic basically does the reduction
                     let ga = handle_broadcast(&final_grad, a);
                     node_grads.entry(a.id).or_default().push(ga);
                 }
-                NodeType::Operation(OpType::Sum { axis, keep_dims }) => {
+                OpType::Sum { axis, keep_dims } => {
                     let a = &input_tensors[0];
                     let mut grad = final_grad;
 
@@ -197,7 +182,7 @@ pub fn expand_graph<B: Backend + 'static>() {
 
                     node_grads.entry(a.id).or_default().push(expanded_grad);
                 }
-                NodeType::Operation(OpType::Identity) | NodeType::Operation(OpType::AddN) => {
+                OpType::Identity | OpType::AddN => {
                     for inp in &input_tensors {
                         node_grads
                             .entry(inp.id)
@@ -205,7 +190,7 @@ pub fn expand_graph<B: Backend + 'static>() {
                             .push(final_grad.clone());
                     }
                 }
-                NodeType::Operation(OpType::Sigmoid) => {
+                OpType::Sigmoid => {
                     let y = DTensor::<B>::from_id(node_id);
                     let one = DTensor::<B>::ones_like(&y);
                     let grad = final_grad * y.clone() * (one - y);
@@ -214,7 +199,7 @@ pub fn expand_graph<B: Backend + 'static>() {
                         .or_default()
                         .push(grad);
                 }
-                NodeType::Operation(OpType::Tanh) => {
+                OpType::Tanh => {
                     let y = DTensor::<B>::from_id(node_id);
                     let one = DTensor::<B>::ones_like(&y);
                     let grad = final_grad * (one - y.powi(2));
@@ -223,7 +208,7 @@ pub fn expand_graph<B: Backend + 'static>() {
                         .or_default()
                         .push(grad);
                 }
-                NodeType::Operation(OpType::Exp) => {
+                OpType::Exp => {
                     let y = DTensor::<B>::from_id(node_id);
                     let grad = final_grad * y;
                     node_grads
@@ -231,12 +216,12 @@ pub fn expand_graph<B: Backend + 'static>() {
                         .or_default()
                         .push(grad);
                 }
-                NodeType::Operation(OpType::Log) => {
+                OpType::Log => {
                     let x = &input_tensors[0];
                     let grad = final_grad * x.clone().powi(-1);
                     node_grads.entry(x.id).or_default().push(grad);
                 }
-                NodeType::Operation(OpType::ReLU) => {
+                OpType::ReLU => {
                     let x = DTensor::<B>::from_id(input_tensors[0].id);
                     let zeros = x.clone() - x.clone();
                     let mask = x.gt(zeros);
@@ -246,7 +231,7 @@ pub fn expand_graph<B: Backend + 'static>() {
                         .or_default()
                         .push(grad);
                 }
-                NodeType::Operation(OpType::Softmax { axis }) => {
+                OpType::Softmax { axis } => {
                     let y = DTensor::<B>::from_id(node_id);
                     let gy = final_grad;
                     let y_gy = y.clone() * gy.clone();
@@ -257,7 +242,7 @@ pub fn expand_graph<B: Backend + 'static>() {
                         .or_default()
                         .push(grad);
                 }
-                NodeType::Operation(OpType::Powi { n }) => {
+                OpType::Powi { n } => {
                     let x = DTensor::<B>::from_id(input_tensors[0].id);
                     let n_const = DTensor::<B>::new_const(B::from_vec(vec![n as f32], &[1]));
                     let nx_n_minus_1 = x.powi(n - 1) * n_const; // Broadcast
@@ -273,21 +258,22 @@ pub fn expand_graph<B: Backend + 'static>() {
 
         with_graph::<B, _, _>(|graph| {
             for &(x, grad_node_id) in &x_targets {
-                if let NodeType::Grad { .. } = graph.nodes[grad_node_id].node_type {
+                if let OpType::Grad { .. } = graph.nodes[grad_node_id].op {
                     let shape = graph.nodes[x].shape.clone().expect("Shape missing");
                     let zeros = B::zeros(&shape);
 
                     let zeros_id = graph.nodes.len();
                     graph.nodes.push(Node {
                         id: zeros_id,
-                        node_type: NodeType::Const,
+                        role: crate::engine::node::Role::Const, // Zeros is Const
+                        op: Option::Some(OpType::NoOp).unwrap_or(OpType::NoOp), // Actually OpType::NoOp
                         inputs: vec![],
-                        data: Some(zeros),
+                        control_deps: vec![],
                         shape: Some(shape),
                     });
+                    graph.initializers.insert(zeros_id, zeros);
 
-                    graph.nodes[grad_node_id].node_type =
-                        NodeType::Operation(crate::engine::node::OpType::Identity);
+                    graph.nodes[grad_node_id].op = crate::engine::node::OpType::Identity;
                     graph.nodes[grad_node_id].inputs = vec![zeros_id];
                 }
             }

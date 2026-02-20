@@ -6,10 +6,7 @@ use std::{
 
 use crate::{backend::Backend, engine::node::Node};
 
-use self::{
-    executor::Executor,
-    node::{NodeId, NodeType},
-};
+use self::{executor::Executor, node::NodeId};
 
 pub mod autodiff;
 pub mod executor;
@@ -24,7 +21,8 @@ pub mod tensor;
 
 #[derive(Debug, Clone)]
 pub struct GraphBuilder<B: Backend> {
-    pub nodes: Vec<Node<B>>,
+    pub nodes: Vec<Node>,
+    pub initializers: HashMap<NodeId, B::Tensor>,
 }
 
 thread_local! {
@@ -48,9 +46,12 @@ where
         let type_id = TypeId::of::<B>();
 
         // グラフビルダーが存在しない場合は新規作成
-        let graph_any = map
-            .entry(type_id)
-            .or_insert_with(|| Box::new(GraphBuilder::<B> { nodes: Vec::new() }));
+        let graph_any = map.entry(type_id).or_insert_with(|| {
+            Box::new(GraphBuilder::<B> {
+                nodes: Vec::new(),
+                initializers: HashMap::new(),
+            })
+        });
 
         // グラフビルダーを取得して関数を実行
         let graph_builder = graph_any.downcast_mut::<GraphBuilder<B>>().unwrap();
@@ -77,16 +78,40 @@ impl<B: Backend> GraphBuilder<B> {
     /// グラフ内の`Assign`ノードを出力（ルート）と見なし、
     /// それらの値を計算するために必要なノードの実行順序（トポロジカルソート）を決定します。
     fn build(self) -> Executor<B> {
-        // Assignノードを全て取得し、それらをグラフの出力（ルート）として扱う
-        let mut outputs = Vec::new();
+        let mut training_roots = Vec::new();
+        let mut inference_roots = Vec::new();
+
         for node in &self.nodes {
-            if let NodeType::Assign { .. } = node.node_type {
-                outputs.push(node.id);
+            // Assign nodes act as roots (outputs to be computed)
+            if let node::OpType::Assign { .. } = node.op {
+                training_roots.push(node.id);
+
+                // For inference, exclude parameter/optimizer updates
+                // inputs[1] is the target node
+                if node.inputs.len() > 1 {
+                    let target_id = node.inputs[1];
+                    let target_role = &self.nodes[target_id].role;
+                    match target_role {
+                        node::Role::LearnableParameter | node::Role::OptimizerState => {
+                            // Exclude from inference
+                        }
+                        _ => {
+                            // Include in inference (e.g. assigning to loss container, accuracy, etc.)
+                            inference_roots.push(node.id);
+                        }
+                    }
+                }
+            } else if let node::Role::TargetMetric = node.role {
+                // Also ensure TargetMetric nodes are computed if they exist
+                training_roots.push(node.id);
+                inference_roots.push(node.id);
             }
         }
 
-        let order = self.topological_sort(&outputs);
-        Executor::new(self.nodes, order)
+        let training_plan = self.topological_sort(&training_roots);
+        let inference_plan = self.topological_sort(&inference_roots);
+
+        Executor::new(self.nodes, self.initializers, training_plan, inference_plan)
     }
 
     /// 指定されたルートノード群から辿れるグラフのトポロジカルソート（実行順序）を返します。

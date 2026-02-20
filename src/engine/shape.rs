@@ -93,19 +93,19 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Result<V
                     input_shapes.len()
                 ));
             }
-            broadcast_shape(input_shapes[0], input_shapes[1])
+            compute_broadcast_shape(input_shapes[0], input_shapes[1])
         }
         OpType::Mul => {
             if input_shapes.len() != 2 {
                 return Err(format!("Mul requires 2 inputs, got {}", input_shapes.len()));
             }
-            broadcast_shape(input_shapes[0], input_shapes[1])
+            compute_broadcast_shape(input_shapes[0], input_shapes[1])
         }
         OpType::Div => {
             if input_shapes.len() != 2 {
                 return Err(format!("Div requires 2 inputs, got {}", input_shapes.len()));
             }
-            broadcast_shape(input_shapes[0], input_shapes[1])
+            compute_broadcast_shape(input_shapes[0], input_shapes[1])
         }
         OpType::Matmul => {
             if input_shapes.len() != 2 {
@@ -151,7 +151,7 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Result<V
                 ));
             }
             let input_shape = input_shapes[0];
-            let common = broadcast_shape(input_shape, shape)?;
+            let common = compute_broadcast_shape(input_shape, shape)?;
             if &common != shape {
                 return Err(format!(
                     "Cannot broadcast {:?} to target {:?}. Result would be {:?}",
@@ -218,7 +218,7 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Result<V
             if input_shapes.len() != 2 {
                 return Err(format!("Gt requires 2 inputs, got {}", input_shapes.len()));
             }
-            broadcast_shape(input_shapes[0], input_shapes[1])
+            compute_broadcast_shape(input_shapes[0], input_shapes[1])
         }
         OpType::Sqrt => {
             if input_shapes.len() != 1 {
@@ -240,12 +240,58 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Result<V
             if input_shapes.len() != 2 {
                 return Err(format!("Eq requires 2 inputs, got {}", input_shapes.len()));
             }
-            broadcast_shape(input_shapes[0], input_shapes[1])
+            compute_broadcast_shape(input_shapes[0], input_shapes[1])
+        }
+        OpType::Assign { .. } => {
+            if input_shapes.len() != 2 {
+                return Err(format!(
+                    "Assign requires 2 inputs, got {}",
+                    input_shapes.len()
+                ));
+            }
+            // value shape must match target shape (input_shapes[1])
+            // We return value shape.
+            if input_shapes[0] != input_shapes[1] {
+                return Err(format!(
+                    "Assign shape mismatch: value={:?}, target={:?}",
+                    input_shapes[0], input_shapes[1]
+                ));
+            }
+            Ok(input_shapes[0].clone())
+        }
+        OpType::NoOp => {
+            // NoOp might have 0 inputs (Input/Param/Const) or 1 input (Identity-like usage?)
+            if input_shapes.is_empty() {
+                // Return empty? Or this case shouldn't be called by op()?
+                // If called by op(), logic requires known output shape.
+                // But Input/Param nodes are creating with explicit shape field, bypassing compute_shape.
+                // So if we are here, it means someone called op(NoOp, inputs).
+                // Let's assume it acts as Identity if inputs > 0
+                if input_shapes.len() == 1 {
+                    Ok(input_shapes[0].clone())
+                } else {
+                    Err("NoOp with no inputs is ambiguous for shape computation".to_string())
+                }
+            } else {
+                Ok(input_shapes[0].clone())
+            }
+        }
+        OpType::Grad { .. } => {
+            // Gradient placeholder.
+            // Usually not called effectively?
+            // Should return shape of gradient, which is X shape.
+            // But inputs are empty for Grad in tensor.rs construction.
+            // So this will fail if we check inputs.
+            // But Grad node construction also Bypass op_ids() and uses FromId.
+            // So compute_shape is NOT called for Grad.
+            // So just return Ok(vec![]) or Error?
+            // Match arm is required.
+            Ok(vec![])
         }
     }
 }
 
-fn broadcast_shape(a: &[usize], b: &[usize]) -> Result<Vec<usize>, String> {
+pub fn compute_broadcast_shape(a: &[usize], b: &[usize]) -> Result<Vec<usize>, String> {
     let a_len = a.len();
     let b_len = b.len();
     let max_len = a_len.max(b_len);
