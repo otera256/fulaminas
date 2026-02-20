@@ -226,6 +226,22 @@ pub fn compute_shape(op_type: &OpType, input_shapes: &[&Vec<usize>]) -> Result<V
             }
             Ok(input_shapes[0].clone())
         }
+        OpType::ArgMax { axis } => {
+            if input_shapes.len() != 1 {
+                return Err(format!(
+                    "ArgMax requires 1 input, got {}",
+                    input_shapes.len()
+                ));
+            }
+            // Argmax reduces the dimension at axis
+            compute_sum_shape(input_shapes[0], Some(*axis), false)
+        }
+        OpType::Eq => {
+            if input_shapes.len() != 2 {
+                return Err(format!("Eq requires 2 inputs, got {}", input_shapes.len()));
+            }
+            broadcast_shape(input_shapes[0], input_shapes[1])
+        }
     }
 }
 

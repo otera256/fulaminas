@@ -226,4 +226,28 @@ impl Backend for NdArray {
     fn sqrt(a: &Self::Tensor) -> Self::Tensor {
         a.mapv(|v| v.sqrt())
     }
+
+    fn eq(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor {
+        (a - b).mapv(|v| if v == 0.0 { 1.0 } else { 0.0 })
+    }
+
+    fn argmax(a: &Self::Tensor, axis: usize) -> Self::Tensor {
+        // argmax along axis.
+        // ndarray doesn't have a direct `argmax_axis` that returns a Tensor (Array).
+        // It has `fold_axis`?
+        // We can map_axis.
+
+        // map_axis returns Array with one less dimension.
+        a.map_axis(ndarray::Axis(axis), |view| {
+            let mut max_idx = 0;
+            let mut max_val = f32::NEG_INFINITY;
+            for (i, &v) in view.indexed_iter() {
+                if v > max_val {
+                    max_val = v;
+                    max_idx = i;
+                }
+            }
+            max_idx as f32
+        })
+    }
 }

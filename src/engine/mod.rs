@@ -15,6 +15,7 @@ pub mod autodiff;
 pub mod executor;
 pub mod layer;
 pub mod loss;
+pub mod metric;
 pub mod model;
 pub mod node;
 pub mod optimizer;

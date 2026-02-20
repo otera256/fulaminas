@@ -48,6 +48,10 @@ pub enum OpType {
     Broadcast {
         shape: Vec<usize>,
     },
+    ArgMax {
+        axis: usize,
+    },
+    Eq,
 }
 
 #[derive(Debug, Clone)]

@@ -81,6 +81,8 @@ impl<B: Backend> Executor<B> {
                         OpType::Powi { n } => B::powi(input_tensors[0], n),
                         OpType::Gt => B::gt(input_tensors[0], input_tensors[1]),
                         OpType::Sqrt => B::sqrt(input_tensors[0]),
+                        OpType::ArgMax { axis } => B::argmax(input_tensors[0], axis),
+                        OpType::Eq => B::eq(input_tensors[0], input_tensors[1]),
                     };
                     output_data = Some(output);
                 }
@@ -112,26 +114,74 @@ impl<B: Backend> Executor<B> {
     /// 計算グラフをDOT言語形式（Graphviz用）の文字列に変換します。
     pub fn to_dot(&self) -> String {
         let mut dot = String::from("digraph G {\n");
+        dot.push_str("    layout=fdp;\n");
+        dot.push_str("    node [style=filled];\n");
 
         for node in &self.nodes {
-            let label = match &node.node_type {
-                NodeType::Input => format!("Input ({:?})", node.shape),
-                NodeType::Parameter => format!("Parameter ({:?})", node.shape),
-                NodeType::Const => format!("Const ({:?})", node.shape),
-                NodeType::Operation(op) => format!("{:?} ({:?})", op, node.shape),
-                NodeType::Assign { target, depth } => {
-                    format!("Assign (target={}, depth={})", target, depth)
+            let (label, shape, color) = match &node.node_type {
+                NodeType::Input => (format!("Input\\n{:?}", node.shape), "box", "lightgray"),
+                NodeType::Parameter => (
+                    format!("Parameter\\n{:?}", node.shape),
+                    "octagon",
+                    "lightyellow",
+                ),
+                NodeType::Const => (
+                    format!("Const\\n{:?}", node.shape),
+                    "doublecircle",
+                    "lightgray",
+                ),
+                NodeType::Operation(op) => {
+                    let color = match op {
+                        OpType::Add
+                        | OpType::Sub
+                        | OpType::Mul
+                        | OpType::Div
+                        | OpType::Neg
+                        | OpType::Powi { .. }
+                        | OpType::Sqrt => "lightblue",
+                        OpType::Matmul
+                        | OpType::Transpose
+                        | OpType::Reshape { .. }
+                        | OpType::Broadcast { .. }
+                        | OpType::Identity
+                        | OpType::OnesLike => "lightyellow",
+                        OpType::Sigmoid
+                        | OpType::Tanh
+                        | OpType::ReLU
+                        | OpType::Softmax { .. }
+                        | OpType::Exp
+                        | OpType::Log => "lightgreen",
+                        OpType::Sum { .. }
+                        | OpType::AddN
+                        | OpType::Gt
+                        | OpType::ArgMax { .. }
+                        | OpType::Eq => "lightcoral",
+                    };
+                    (format!("{:?}\\n{:?}", op, node.shape), "ellipse", color)
                 }
-                NodeType::Grad { x, y } => format!("Grad (x={}, y={})", x, y),
+                NodeType::Assign { target, depth } => (
+                    format!("Assign\\n(target={}, depth={})", target, depth),
+                    "invhouse",
+                    "orange",
+                ),
+                NodeType::Grad { x, y } => (format!("Grad\\n(x={}, y={})", x, y), "note", "plum"),
             };
 
             dot.push_str(&format!(
-                "    {} [label=\"{}: {}\"];\n",
-                node.id, node.id, label
+                "    {} [label=\"#{}: {}\", shape={}, fillcolor={}];\n",
+                node.id, node.id, label, shape, color
             ));
 
             for &input in &node.inputs {
                 dot.push_str(&format!("    {} -> {};\n", input, node.id));
+            }
+
+            // Assignノードの場合はターゲットへ点線のエッジを張る
+            if let NodeType::Assign { target, .. } = node.node_type {
+                dot.push_str(&format!(
+                    "    {} -> {} [style=dashed, label=\"assign\"];\n",
+                    node.id, target
+                ));
             }
         }
 

@@ -44,5 +44,7 @@ pub trait Backend: Clone + Debug {
     fn exp(a: &Self::Tensor) -> Self::Tensor;
     fn powi(a: &Self::Tensor, n: i32) -> Self::Tensor;
     fn gt(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor; // For ReLU grad
+    fn eq(a: &Self::Tensor, b: &Self::Tensor) -> Self::Tensor; // For accuracy
     fn sqrt(a: &Self::Tensor) -> Self::Tensor;
+    fn argmax(a: &Self::Tensor, axis: usize) -> Self::Tensor; // Returns indices as Elm
 }

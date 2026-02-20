@@ -444,6 +444,16 @@ impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
     pub fn sqrt(self) -> Self {
         Tensor::op(OpType::Sqrt, vec![&self])
     }
+
+    pub fn eq(self, rhs: Self) -> Self {
+        Tensor::op(OpType::Eq, vec![&self, &rhs])
+    }
+}
+
+impl<B: Backend + 'static, S: Shape + Default> Tensor<B, S> {
+    pub fn argmax<OutS: Shape + Default>(self, axis: usize) -> Tensor<B, OutS> {
+        Tensor::<B, S>::op_slice::<OutS>(OpType::ArgMax { axis }, &[&self])
+    }
 }
 
 // Specialized implementations for Rank2 (Matrix)
