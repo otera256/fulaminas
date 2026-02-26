@@ -102,17 +102,21 @@ mod tests {
         // y = 3 * x^2
         // dy/dx = 6 * x
         // x = 2.0 -> dy/dx = 12.0
-        let x_data = NdArray::from_vec(vec![2.0], &[1]);
-        let x = DTensor::new_input_dynamic(vec![1]);
+        let x_data = NdArray::from_vec(vec![2.0], &[]);
+        let x = Tensor::<NdArray, crate::engine::shape::Rank0>::new_input();
 
-        let c3 = DTensor::new_const(NdArray::from_vec(vec![3.0], &[1]));
+        let c3 = Tensor::<NdArray, crate::engine::shape::Rank0>::new_const(NdArray::from_vec(
+            vec![3.0],
+            &[],
+        ));
 
         let y = c3 * x.clone() * x.clone();
         let grad_x = y.grad(&x);
 
         // Need to run graph
-        let output = DTensor::new_parameter(NdArray::zeros(&[1]));
-        let _assign = DTensor::assign(&output, &grad_x, 0);
+        let output =
+            Tensor::<NdArray, crate::engine::shape::Rank0>::new_parameter(NdArray::zeros(&[]));
+        let _assign = Tensor::assign(&output, &grad_x, 0);
 
         let mut executor = build::<NdArray>();
         executor.run(vec![(x.id(), x_data)]);

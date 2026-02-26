@@ -19,11 +19,4 @@ impl<B: Backend> Layer<B> for MLP<B> {
     fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         self.layers.iter().fold(x, |acc, layer| layer.forward(acc))
     }
-
-    fn parameters(&self) -> Vec<DTensor<B>> {
-        self.layers
-            .iter()
-            .flat_map(|layer| layer.parameters())
-            .collect()
-    }
 }

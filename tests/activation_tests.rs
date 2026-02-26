@@ -11,7 +11,10 @@ fn test_sigmoid() {
     let x_data = NdArray::from_vec(vec![0.0], &[1]);
     let x = DTensor::new_input_dynamic(vec![1]);
     let y = x.clone().sigmoid();
-    let grad = y.grad(&x);
+    let grad = y
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&x);
 
     let y_out = DTensor::new_parameter(NdArray::zeros(&[1]));
     let grad_out = DTensor::new_parameter(NdArray::zeros(&[1]));
@@ -33,7 +36,10 @@ fn test_tanh() {
     let x_data = NdArray::from_vec(vec![0.0], &[1]);
     let x = DTensor::new_input_dynamic(vec![1]);
     let y = x.clone().tanh();
-    let grad = y.grad(&x);
+    let grad = y
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&x);
 
     let y_out = DTensor::new_parameter(NdArray::zeros(&[1]));
     let grad_out = DTensor::new_parameter(NdArray::zeros(&[1]));
@@ -55,7 +61,10 @@ fn test_relu() {
     let x_data = NdArray::from_vec(vec![-1.0, 1.0], &[2]);
     let x = DTensor::new_input_dynamic(vec![2]);
     let y = x.clone().relu();
-    let grad = y.grad(&x);
+    let grad = y
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&x);
 
     let y_out = DTensor::new_parameter(NdArray::zeros(&[2]));
     let grad_out = DTensor::new_parameter(NdArray::zeros(&[2]));
@@ -81,7 +90,10 @@ fn test_log_exp() {
     let x_data = NdArray::from_vec(vec![1.0], &[1]);
     let x = DTensor::new_input_dynamic(vec![1]);
     let y = x.clone().exp().log(); // Should be identity x
-    let grad = y.grad(&x);
+    let grad = y
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&x);
 
     let y_out = DTensor::new_parameter(NdArray::zeros(&[1]));
     let grad_out = DTensor::new_parameter(NdArray::zeros(&[1]));
@@ -103,7 +115,10 @@ fn test_powi() {
     let x_data = NdArray::from_vec(vec![2.0], &[1]);
     let x = DTensor::new_input_dynamic(vec![1]);
     let y = x.clone().powi(3);
-    let grad = y.grad(&x);
+    let grad = y
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&x);
 
     let y_out = DTensor::new_parameter(NdArray::zeros(&[1]));
     let grad_out = DTensor::new_parameter(NdArray::zeros(&[1]));
@@ -127,7 +142,10 @@ fn test_softmax() {
     let x = DTensor::new_input_dynamic(vec![2]);
     let y = x.clone().softmax(Some(0)); // or None for all
     let l = y.clone().sum(Some(0)); // Scalar 1.0
-    let grad = l.grad(&x);
+    let grad = l
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&x);
 
     let y_out = DTensor::new_parameter(NdArray::zeros(&[2]));
     let grad_out = DTensor::new_parameter(NdArray::zeros(&[2]));

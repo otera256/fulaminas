@@ -15,13 +15,14 @@ pub mod loss;
 pub mod metric;
 pub mod model;
 pub mod node;
+pub mod operation;
 pub mod optimizer;
 pub mod shape;
 pub mod tensor;
 
 #[derive(Debug, Clone)]
 pub struct GraphBuilder<B: Backend> {
-    pub nodes: Vec<Node>,
+    pub nodes: Vec<Node<B>>,
     pub initializers: HashMap<NodeId, B::Tensor>,
 }
 
@@ -83,7 +84,7 @@ impl<B: Backend> GraphBuilder<B> {
 
         for node in &self.nodes {
             // Assign nodes act as roots (outputs to be computed)
-            if let node::OpType::Assign { .. } = node.op {
+            if node.op.name().starts_with("Assign") {
                 training_roots.push(node.id);
 
                 // For inference, exclude parameter/optimizer updates

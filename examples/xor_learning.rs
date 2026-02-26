@@ -7,7 +7,7 @@ use fulaminas::engine::build;
 use fulaminas::engine::layer::linear::InitStrategy;
 use fulaminas::engine::layer::linear::Linear;
 use fulaminas::engine::loss::CrossEntropyLoss;
-use fulaminas::engine::optimizer::{Optimizer, SGD};
+use fulaminas::engine::optimizer::SGD;
 use fulaminas::engine::shape::{Rank0, Rank1, Rank2};
 use fulaminas::engine::tensor::Tensor;
 
@@ -34,9 +34,11 @@ fn main() {
 
     // Model
     // Linear::<Backend, In, Out>
-    let h1 = Linear::<NdArray, 2, 5>::new(InitStrategy::XavierNormal).forward(x.clone());
-    let h2 = h1.tanh();
-    let y = Linear::<NdArray, 5, 2>::new(InitStrategy::XavierNormal).forward(h2);
+    let layer1 = Linear::<NdArray, 2, 5>::new(InitStrategy::XavierNormal);
+    let layer2 = Linear::<NdArray, 5, 2>::new(InitStrategy::XavierNormal);
+
+    let h1 = layer1.forward(x.clone()).tanh();
+    let y = layer2.forward(h1);
 
     // Loss
     // Returns Rank2<1, 2> element-wise
@@ -49,7 +51,8 @@ fn main() {
     let loss = loss_per_sample.sum_as::<Rank0>(None);
 
     let mut optimizer = SGD::new(0.1);
-    optimizer.step(&loss);
+    layer1.update_params(&mut optimizer, &loss);
+    layer2.update_params(&mut optimizer, &loss);
 
     let mut executor = build::<NdArray>();
     let dot = executor.to_dot();

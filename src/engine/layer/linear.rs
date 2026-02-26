@@ -16,8 +16,8 @@ pub enum InitStrategy {
 }
 
 pub struct Linear<B: Backend + 'static, const I: usize, const O: usize> {
-    w: Tensor<B, Rank2<I, O>>,
-    b: Tensor<B, Rank1<O>>,
+    pub w: Tensor<B, Rank2<I, O>>,
+    pub b: Tensor<B, Rank1<O>>,
 }
 
 impl<B: Backend + 'static, const I: usize, const O: usize> Linear<B, I, O> {
@@ -66,6 +66,15 @@ impl<B: Backend + 'static, const I: usize, const O: usize> Linear<B, I, O> {
         let xw = x.matmul_static(self.w.clone());
         xw + self.b.clone()
     }
+
+    pub fn update_params(
+        &self,
+        optimizer: &mut impl crate::engine::optimizer::Optimizer<B>,
+        loss: &Tensor<B, crate::engine::shape::Rank0>,
+    ) {
+        optimizer.update_param(&self.w, loss);
+        optimizer.update_param(&self.b, loss);
+    }
 }
 
 impl<B: Backend + 'static, const I: usize, const O: usize> Layer<B> for Linear<B, I, O> {
@@ -87,9 +96,5 @@ impl<B: Backend + 'static, const I: usize, const O: usize> Layer<B> for Linear<B
         // So x.matmul(w_dyn) returns DTensor.
 
         x.matmul(w_dyn) + b_dyn
-    }
-
-    fn parameters(&self) -> Vec<DTensor<B>> {
-        vec![self.w.to_dynamic(), self.b.to_dynamic()]
     }
 }

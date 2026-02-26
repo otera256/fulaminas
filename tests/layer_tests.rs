@@ -55,11 +55,8 @@ fn test_linear_initialization_stats() {
 
     // HeNormal: std = sqrt(2/in) = sqrt(0.02) ~= 0.1414
     let layer = Linear::<NdArray, IN_FEATURES, OUT_FEATURES>::new(InitStrategy::HeNormal);
-    // parameters() returns Vec<DTensor>.
-    // Linear implementation of Layer trait converts static to dynamic.
-    let params = layer.parameters();
-    let w = &params[0]; // weight (Dynamic)
-    let _b = &params[1]; // bias
+    let w = layer.w.clone(); // weight (Static Rank2)
+    let _b = layer.b.clone(); // bias
 
     // We can't easily get data from Tensor without running a graph.
     // But parameters created with new_parameter (inside Linear::new) have data.
@@ -127,12 +124,17 @@ fn test_linear_backward() {
     // So `loss.grad(&param)` returns tensor of same shape/type as `param`.
     // If `param` is dynamic, `grad` returns dynamic. This is fine.
 
-    let params = layer.parameters();
-    let w_dyn = &params[0];
-    let b_dyn = &params[1];
+    let w = layer.w.clone();
+    let b = layer.b.clone();
 
-    let grad_w = loss.grad(w_dyn);
-    let grad_b = loss.grad(b_dyn);
+    let grad_w = loss
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&w);
+    let grad_b = loss
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&b);
 
     // Assign grads to outputs
     let grad_w_out =
@@ -150,8 +152,8 @@ fn test_linear_backward() {
     // grad_w_out is static.
     // We can use grad_w_out.to_dynamic() as target?
     // And assign.
-    let _ = Tensor::assign(&grad_w_out.to_dynamic(), &grad_w, 0);
-    let _ = Tensor::assign(&grad_b_out.to_dynamic(), &grad_b, 0);
+    let _ = Tensor::assign(&grad_w_out, &grad_w, 0);
+    let _ = Tensor::assign(&grad_b_out, &grad_b, 0);
 
     let mut executor = build::<NdArray>();
     executor.run(vec![(x.id(), x_data)]);

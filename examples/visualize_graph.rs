@@ -12,7 +12,10 @@ fn main() {
     let x = DTensor::new_input_dynamic(vec![1]);
     let c3 = DTensor::new_const(NdArray::from_vec(vec![3.0], &[1]));
     let y = c3 * x.clone() * x.clone();
-    let grad_x = y.grad(&x);
+    let grad_x = y
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&x);
 
     // Assign to output to enforce calculation
     let output = DTensor::new_parameter(NdArray::zeros(&[1]));

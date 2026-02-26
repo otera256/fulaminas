@@ -1,0 +1,50 @@
+use fulaminas::{
+    backend::{Backend, ndarray::NdArray},
+    data::{loader::DataLoader, mnist::Mnist},
+    engine::{shape::Dynamic, tensor::Tensor},
+};
+
+type DTensor = Tensor<NdArray, Dynamic>;
+
+fn main() {
+    let mnist = Mnist::new(
+        "./data/fashion-mnist",
+        true,
+        false, // Don't download, use local
+        fulaminas::data::mnist::MnistVariant::FashionMnist,
+    )
+    .unwrap();
+    let mnist_loader = DataLoader::new(&mnist, 1, true);
+    for (i, batch) in mnist_loader.iter().enumerate().take(50) {
+        let (vec, label) = batch[0].clone();
+        // NdArray::from_vec returns NdArray's Tensor type (ArrayD<f32>)
+        // Tensor::new_const expects B::Tensor. B is NdArray.
+        // So this is correct.
+        let image_data = <NdArray as Backend>::from_vec(vec, &[1, 28, 28]);
+        let image_tensor = DTensor::new_const(image_data);
+
+        let label = match label {
+            0 => "T-shirt_top",
+            1 => "Trouser",
+            2 => "Pullover",
+            3 => "Dress",
+            4 => "Coat",
+            5 => "Sandal",
+            6 => "Shirt",
+            7 => "Sneaker",
+            8 => "Bag",
+            9 => "Ankle boot",
+            _ => "Unknown",
+        };
+
+        // We need an executor to access the data (now stored in memory/initializers)
+        let executor = fulaminas::engine::build::<NdArray>();
+
+        fulaminas::vis::save_image(
+            &executor,
+            &image_tensor,
+            &format!("images/fashion_mnist_{}_{}.png", i, label),
+        )
+        .unwrap();
+    }
+}

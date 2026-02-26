@@ -23,10 +23,6 @@ impl<B: Backend> Layer<B> for ReLU<B> {
     fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.relu()
     }
-
-    fn parameters(&self) -> Vec<DTensor<B>> {
-        vec![]
-    }
 }
 
 pub struct Sigmoid<B: Backend> {
@@ -44,10 +40,6 @@ impl<B: Backend> Sigmoid<B> {
 impl<B: Backend> Layer<B> for Sigmoid<B> {
     fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.sigmoid()
-    }
-
-    fn parameters(&self) -> Vec<DTensor<B>> {
-        vec![]
     }
 }
 
@@ -67,10 +59,6 @@ impl<B: Backend> Layer<B> for Tanh<B> {
     fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.tanh()
     }
-
-    fn parameters(&self) -> Vec<DTensor<B>> {
-        vec![]
-    }
 }
 
 pub struct Softmax<B: Backend> {
@@ -89,10 +77,6 @@ impl<B: Backend> Layer<B> for Softmax<B> {
     fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.softmax(Some(0))
     }
-
-    fn parameters(&self) -> Vec<DTensor<B>> {
-        vec![]
-    }
 }
 
 pub struct Swish<B: Backend> {
@@ -110,9 +94,5 @@ impl<B: Backend> Swish<B> {
 impl<B: Backend> Layer<B> for Swish<B> {
     fn forward(&self, x: DTensor<B>) -> DTensor<B> {
         x.swish()
-    }
-
-    fn parameters(&self) -> Vec<DTensor<B>> {
-        vec![]
     }
 }

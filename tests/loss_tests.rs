@@ -72,7 +72,10 @@ fn test_mse_grad() {
     // If L is [1], grad is [1].
     // If x=[1], t=[1], elem_loss=[1]. output is scalar-like.
     let loss = elem_loss; // It is already [1] because inputs are [1].
-    let grad = loss.grad(&x);
+    let grad = loss
+        .clone()
+        .sum_as::<fulaminas::engine::shape::Rank0>(None)
+        .grad(&x);
 
     let grad_out = DTensor::new_parameter(NdArray::zeros(&[1]));
     let _assign = DTensor::assign(&grad_out, &grad, 0);

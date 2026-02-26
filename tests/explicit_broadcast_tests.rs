@@ -48,12 +48,19 @@ fn test_explicit_broadcast_grad() {
     let b = DTensor::new_parameter(b_data);
     let b_id = b.id();
 
-    let c = a * b;
+    let c = a.clone() * b.clone();
     let loss = c.sum(None); // Sum all
 
     // Optimizer step creates assignment nodes which are roots.
     let mut optimizer = SGD::new(1.0);
-    optimizer.step(&loss);
+    optimizer.update_param(
+        &a,
+        &loss.clone().sum_as::<fulaminas::engine::shape::Rank0>(None),
+    );
+    optimizer.update_param(
+        &b,
+        &loss.clone().sum_as::<fulaminas::engine::shape::Rank0>(None),
+    );
 
     let mut executor = build::<B>();
     executor.step_train(vec![]);

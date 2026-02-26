@@ -19,23 +19,24 @@ use fulaminas::engine::tensor::Tensor;
 // Define constraints for network
 const BATCH_SIZE: usize = 256;
 const IN_FEATURES: usize = 784;
-const HIDDEN: usize = 256;
+const HIDDEN_1: usize = 256;
+const HIDDEN_2: usize = 128;
 const CLASSES: usize = 10;
 
 fn main() {
     let mnist = Mnist::new(
-        "./data/mnist",
+        "./data/fashion-mnist",
         true,
         false, // Don't download, use local
-        fulaminas::data::mnist::MnistVariant::Mnist,
+        fulaminas::data::mnist::MnistVariant::FashionMnist,
     )
     .unwrap();
     let mnist_loader = DataLoader::new(&mnist, BATCH_SIZE, true);
     let mnist_validation = Mnist::new(
-        "./data/mnist",
+        "./data/fashion-mnist",
         false,
         false,
-        fulaminas::data::mnist::MnistVariant::Mnist,
+        fulaminas::data::mnist::MnistVariant::FashionMnist,
     )
     .unwrap();
     let mnist_validation_loader = DataLoader::new(&mnist_validation, BATCH_SIZE, true);
@@ -52,13 +53,15 @@ fn main() {
 
     // Layers (Static)
     // Linear::<Backend, Input, Output>
-    let layer1 = Linear::<NdArray, IN_FEATURES, HIDDEN>::new(InitStrategy::HeNormal);
-    let layer2 = Linear::<NdArray, HIDDEN, CLASSES>::new(InitStrategy::HeNormal);
+    let layer1 = Linear::<NdArray, IN_FEATURES, HIDDEN_1>::new(InitStrategy::HeNormal);
+    let layer2 = Linear::<NdArray, HIDDEN_1, HIDDEN_2>::new(InitStrategy::HeNormal);
+    let layer3 = Linear::<NdArray, HIDDEN_2, CLASSES>::new(InitStrategy::HeNormal);
 
     // Forward pass
     // Note: linear.forward(x) expects Tensor<B, Rank2<Batch, In>>
     let h1 = layer1.forward(x_flat).relu();
-    let y = layer2.forward(h1);
+    let h2 = layer2.forward(h1).relu();
+    let y = layer3.forward(h2);
 
     println!("Graph built with Static Shapes.");
 
@@ -98,6 +101,7 @@ fn main() {
     // optimizer.step requires Tensor<B, S>
     layer1.update_params(&mut optimizer, &loss);
     layer2.update_params(&mut optimizer, &loss);
+    layer3.update_params(&mut optimizer, &loss);
 
     let mut executor = build::<NdArray>();
 
@@ -107,7 +111,7 @@ fn main() {
     file.write_all(dot.as_bytes()).unwrap();
     println!("Graph written to graph.dot");
 
-    for epoch in 0..10 {
+    for epoch in 0..20 {
         for (i, (input_val_4d, target_val, _mask_val)) in mnist_loader
             .iter()
             .map(|b| fulaminas::data::collate::mnist_collate_padded::<NdArray>(b, BATCH_SIZE))

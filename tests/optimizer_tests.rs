@@ -25,7 +25,10 @@ fn test_sgd_convergence() {
 
     // Optimizer
     let mut optimizer = SGD::new(0.1);
-    optimizer.step(&loss); // Builds update graph
+    optimizer.update_param(
+        &x,
+        &loss.clone().sum_as::<fulaminas::engine::shape::Rank0>(None),
+    ); // Builds update graph
 
     let mut executor = build::<NdArray>();
 
@@ -50,7 +53,10 @@ fn test_adam_convergence() {
     let loss = x.clone() * x.clone();
 
     let mut optimizer = Adam::new(0.1);
-    optimizer.step(&loss);
+    optimizer.update_param(
+        &x,
+        &loss.clone().sum_as::<fulaminas::engine::shape::Rank0>(None),
+    );
 
     let mut executor = build::<NdArray>();
 

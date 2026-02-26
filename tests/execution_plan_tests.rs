@@ -19,7 +19,7 @@ fn test_execution_plan_separation() {
     // step adds Assign nodes: p = p - lr * grad
     // grad of p w.r.t p is 1.0.
     // So new_p should be 10.0 - 1.0 * 1.0 = 9.0 after training step.
-    optimizer.step(&loss);
+    optimizer.update_param(&p, &loss);
 
     let mut executor = build::<NdArray>();
 

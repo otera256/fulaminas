@@ -14,7 +14,4 @@ type DTensor<B> = Tensor<B, Dynamic>;
 // モデル全体もこのレイヤーとして定義できるようにする
 pub trait Layer<B: Backend> {
     fn forward(&self, x: DTensor<B>) -> DTensor<B>;
-
-    // パラメータを返す（学習対象のTensor）
-    fn parameters(&self) -> Vec<DTensor<B>>;
 }
